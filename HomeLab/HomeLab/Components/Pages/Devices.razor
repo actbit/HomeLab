@@ -1,0 +1,138 @@
+@page "/devices"
+@attribute [Authorize]
+@inject HttpClient Http
+@inject ILogger<Devices> Logger
+
+<PageTitle>デバイス管理</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>📱 デバイス管理</h1>
+    <a href="/setup/provision" class="btn btn-primary">+ 新規デバイス追加</a>
+</div>
+
+@if (isLoading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+    </div>
+}
+else if (devices.Any())
+{
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>デバイス名</th>
+                    <th>状態</th>
+                    <th>ロック</th>
+                    <th>バッテリー</th>
+                    <th>WiFi</th>
+                    <th>最終通信</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var device in devices)
+                {
+                    <tr>
+                        <td>
+                            <strong>@device.Name</strong>
+                        </td>
+                        <td>
+                            <span class="badge @(device.Status == Shared.Enums.DeviceStatus.Online ? "bg-success" : "bg-secondary")">
+                                @device.Status
+                            </span>
+                        </td>
+                        <td>
+                            <span class="fs-5">@(device.IsLocked ? "🔒" : "🔓")</span>
+                        </td>
+                        <td>-</td>
+                        <td>-</td>
+                        <td>
+                            @(device.LastSeenAt.HasValue
+                                ? device.LastSeenAt.Value.LocalDateTime.ToString("MM/dd HH:mm")
+                                : "-")
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <a href="/devices/@device.Id" class="btn btn-outline-primary">詳細</a>
+                                <button class="btn btn-outline-danger"
+                                        @onclick="() => DeleteDevice(device.Id, device.Name)">
+                                    削除
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+else
+{
+    <div class="text-center py-5">
+        <h3 class="text-muted">デバイスが登録されていません</h3>
+        <p class="text-muted">「新規デバイス追加」からESP32をセットアップしてください</p>
+        <a href="/setup/provision" class="btn btn-primary mt-3">デバイスを追加</a>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger mt-3">@errorMessage</div>
+}
+
+@code {
+    private List<HomeLab.Shared.DTOs.DeviceListItem> devices = [];
+    private bool isLoading = false;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDevices();
+    }
+
+    private async Task LoadDevices()
+    {
+        isLoading = true;
+        try
+        {
+            var result = await Http.GetFromJsonAsync<List<HomeLab.Shared.DTOs.DeviceListItem>>("/api/devices");
+            devices = result ?? [];
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"デバイス一覧の取得に失敗: {ex.Message}";
+            Logger.LogError(ex, "Failed to load devices");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task DeleteDevice(Guid id, string name)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"'{name}' を削除しますか？"))
+            return;
+
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/devices/{id}");
+            if (response.IsSuccessStatusCode)
+            {
+                await LoadDevices();
+            }
+            else
+            {
+                errorMessage = "デバイスの削除に失敗しました";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"削除エラー: {ex.Message}";
+        }
+    }
+
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+}

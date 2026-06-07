@@ -1,0 +1,166 @@
+@page "/settings/passkeys"
+@attribute [Authorize]
+@inject HttpClient Http
+@inject ILogger<PasskeyManage> Logger
+
+<PageTitle>パスキー管理</PageTitle>
+
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/">ダッシュボード</a></li>
+        <li class="breadcrumb-item active">パスキー管理</li>
+    </ol>
+</nav>
+
+<h1 class="mb-4">🔑 パスキー管理</h1>
+
+<div class="alert alert-info mb-4">
+    <strong>パスキーについて:</strong> パスキーは生体認証（指紋・顔認証）やデバイスPINでログインできる安全な認証方式です。
+    iCloud Keychain、Google Password Manager、Windows Helloで複数デバイス間で同期されます。
+</div>
+
+@if (isLoading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border" role="status"></div>
+    </div>
+}
+else
+{
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3>登録済みパスキー</h3>
+        <button class="btn btn-primary" @onclick="RegisterNewPasskey" disabled="@isOperating">
+            + 新しいパスキーを追加
+        </button>
+    </div>
+
+    @if (passkeys.Any())
+    {
+        <div class="list-group">
+            @foreach (var passkey in passkeys)
+            {
+                <div class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="mb-1">
+                            @(passkey.Name ?? "名前なし")
+                            <span class="badge bg-info ms-2">@passkey.AuthenticatorType</span>
+                        </h5>
+                        <small class="text-muted">
+                            登録: @passkey.CreatedAt.LocalDateTime.ToString("yyyy/MM/dd")
+                            @if (passkey.LastUsedAt.HasValue)
+                            {
+                                <span> | 最終使用: @passkey.LastUsedAt.Value.LocalDateTime.ToString("yyyy/MM/dd")</span>
+                            }
+                        </small>
+                    </div>
+                    <button class="btn btn-outline-danger btn-sm"
+                            @onclick="@(() => DeletePasskey(passkey.Id, passkey.Name ?? "このパスキー"))">
+                        削除
+                    </button>
+                </div>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="text-center py-4">
+            <p class="text-muted">パスキーが登録されていません</p>
+            <button class="btn btn-primary" @onclick="RegisterNewPasskey">
+                最初のパスキーを登録
+            </button>
+        </div>
+    }
+}
+
+@if (!string.IsNullOrEmpty(statusMessage))
+{
+    <div class="alert @(isError ? "alert-danger" : "alert-success") mt-3">@statusMessage</div>
+}
+
+@code {
+    private List<PasskeyInfo> passkeys = [];
+    private bool isLoading = false;
+    private bool isOperating = false;
+    private string? statusMessage;
+    private bool isError = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPasskeys();
+    }
+
+    private async Task LoadPasskeys()
+    {
+        isLoading = true;
+        try
+        {
+            var result = await Http.GetFromJsonAsync<List<PasskeyInfo>>("/api/auth/passkeys");
+            passkeys = result ?? [];
+        }
+        catch (Exception ex)
+        {
+            ShowMessage($"パスキー一覧の取得に失敗: {ex.Message}", true);
+            Logger.LogError(ex, "Failed to load passkeys");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task RegisterNewPasskey()
+    {
+        isOperating = true;
+        statusMessage = null;
+
+        try
+        {
+            // TODO: WebAuthn JavaScript連携 → サーバーに登録
+            ShowMessage("Passkey登録機能はWebAuthn JS連携の実装が必要です", true);
+        }
+        catch (Exception ex)
+        {
+            ShowMessage($"パスキー登録エラー: {ex.Message}", true);
+        }
+        finally
+        {
+            isOperating = false;
+        }
+    }
+
+    private async Task DeletePasskey(Guid id, string name)
+    {
+        isOperating = true;
+        statusMessage = null;
+
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/auth/passkeys/{id}");
+            if (response.IsSuccessStatusCode)
+            {
+                ShowMessage($"'{name}' を削除しました", false);
+                await LoadPasskeys();
+            }
+            else
+            {
+                ShowMessage("パスキーの削除に失敗しました", true);
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowMessage($"削除エラー: {ex.Message}", true);
+        }
+        finally
+        {
+            isOperating = false;
+        }
+    }
+
+    private void ShowMessage(string message, bool error)
+    {
+        statusMessage = message;
+        isError = error;
+    }
+
+    private record PasskeyInfo(Guid Id, string? Name, string AuthenticatorType, DateTimeOffset CreatedAt, DateTimeOffset? LastUsedAt);
+}

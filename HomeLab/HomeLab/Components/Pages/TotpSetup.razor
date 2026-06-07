@@ -1,0 +1,216 @@
+@page "/settings/totp"
+@attribute [Authorize]
+@inject HttpClient Http
+@inject ILogger<TotpSetup> Logger
+
+<PageTitle>認証器設定</PageTitle>
+
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/">ダッシュボード</a></li>
+        <li class="breadcrumb-item active">認証器設定</li>
+    </ol>
+</nav>
+
+<h1 class="mb-4">🛡️ 認証器 (TOTP) 設定</h1>
+
+<div class="alert alert-info mb-4">
+    <strong>TOTP認証について:</strong> Google Authenticator、Authy、Microsoft Authenticator等のアプリと連携して、
+    ログイン時に6桁の認証コードを要求する2段階認証です。
+</div>
+
+@if (isLoading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border" role="status"></div>
+    </div>
+}
+else
+{
+    @if (totpEnabled)
+    {
+        <div class="card">
+            <div class="card-header bg-success text-white">
+                <h3 class="mb-0">✅ TOTP認証 有効</h3>
+            </div>
+            <div class="card-body">
+                <p>TOTP認証が有効になっています。ログイン時に認証コードの入力が必要です。</p>
+                <button class="btn btn-danger" @onclick="DisableTotp" disabled="@isOperating">
+                    TOTP認証を無効にする
+                </button>
+            </div>
+        </div>
+    }
+    else if (showQrCode)
+    {
+        <div class="card">
+            <div class="card-header">
+                <h3 class="mb-0">QRコードをスキャン</h3>
+            </div>
+            <div class="card-body text-center">
+                <p>認証器アプリで以下のQRコードをスキャンしてください。</p>
+
+                @if (qrCodeImage is not null)
+                {
+                    <img src="data:image/png;base64,@Convert.ToBase64String(qrCodeImage)"
+                         alt="TOTP QR Code" class="img-fluid mb-3" style="max-width: 300px;" />
+                }
+
+                <div class="mt-3">
+                    <label for="verifyCode" class="form-label">認証コード (6桁)</label>
+                    <div class="row justify-content-center">
+                        <div class="col-6 col-md-4">
+                            <input type="text" id="verifyCode" @bind="verifyCode"
+                                   class="form-control text-center fs-4" maxlength="6"
+                                   placeholder="000000" />
+                        </div>
+                    </div>
+                    <button class="btn btn-success mt-3" @onclick="EnableTotp" disabled="@isOperating">
+                        有効化
+                    </button>
+                    <button class="btn btn-outline-secondary mt-3 ms-2" @onclick="CancelSetup">
+                        キャンセル
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="card">
+            <div class="card-header">
+                <h3 class="mb-0">TOTP認証を設定</h3>
+            </div>
+            <div class="card-body text-center">
+                <p class="text-muted">TOTP認証を有効にすると、ログイン時に認証コードが必要になります。</p>
+                <button class="btn btn-primary" @onclick="SetupTotp" disabled="@isOperating">
+                    セットアップ開始
+                </button>
+            </div>
+        </div>
+    }
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger mt-3">@errorMessage</div>
+}
+
+@code {
+    private bool isLoading = true;
+    private bool isOperating = false;
+    private bool totpEnabled = false;
+    private bool showQrCode = false;
+    private byte[]? qrCodeImage;
+    private string verifyCode = string.Empty;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // TODO: API から TOTP有効状態を取得
+        totpEnabled = false; // 仮
+        isLoading = false;
+    }
+
+    private async Task SetupTotp()
+    {
+        isOperating = true;
+        errorMessage = null;
+
+        try
+        {
+            var response = await Http.PostAsync("/api/auth/totp/setup", null);
+            if (response.IsSuccessStatusCode)
+            {
+                qrCodeImage = await response.Content.ReadAsByteArrayAsync();
+                showQrCode = true;
+            }
+            else
+            {
+                errorMessage = "QRコードの生成に失敗しました";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"セットアップエラー: {ex.Message}";
+            Logger.LogError(ex, "TOTP setup failed");
+        }
+        finally
+        {
+            isOperating = false;
+        }
+    }
+
+    private async Task EnableTotp()
+    {
+        if (string.IsNullOrEmpty(verifyCode) || verifyCode.Length != 6)
+        {
+            errorMessage = "6桁の認証コードを入力してください";
+            return;
+        }
+
+        isOperating = true;
+        errorMessage = null;
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("/api/auth/totp/enable",
+                new { Code = verifyCode });
+
+            if (response.IsSuccessStatusCode)
+            {
+                totpEnabled = true;
+                showQrCode = false;
+                errorMessage = null;
+            }
+            else
+            {
+                errorMessage = "認証コードが正しくありません";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"有効化エラー: {ex.Message}";
+        }
+        finally
+        {
+            isOperating = false;
+        }
+    }
+
+    private async Task DisableTotp()
+    {
+        isOperating = true;
+        errorMessage = null;
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("/api/auth/totp/disable",
+                new { Code = "" }); // TODO: パスワード確認など
+
+            if (response.IsSuccessStatusCode)
+            {
+                totpEnabled = false;
+            }
+            else
+            {
+                errorMessage = "TOTP無効化に失敗しました";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"無効化エラー: {ex.Message}";
+        }
+        finally
+        {
+            isOperating = false;
+        }
+    }
+
+    private void CancelSetup()
+    {
+        showQrCode = false;
+        qrCodeImage = null;
+        verifyCode = string.Empty;
+    }
+}

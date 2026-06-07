@@ -1,0 +1,142 @@
+@page "/login"
+@inject HttpClient Http
+@inject ILogger<Login> Logger
+
+<PageTitle>ログイン</PageTitle>
+
+<div class="login-container">
+    <div class="login-card">
+        <h1 class="text-center mb-4">🏠 HomeLab</h1>
+        <p class="text-center text-muted mb-4">SESAME スマートロック管理</p>
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="alert alert-danger">@errorMessage</div>
+        }
+
+        <!-- Passkey ログイン -->
+        <div class="mb-4">
+            <button class="btn btn-primary w-100 btn-lg" @onclick="LoginWithPasskey" disabled="@isLoading">
+                🔑 Passkeyでログイン
+            </button>
+        </div>
+
+        <hr class="my-4" />
+        <p class="text-center text-muted small">または</p>
+
+        <!-- Email + Password ログイン -->
+        <EditForm Model="loginModel" OnValidSubmit="LoginWithPassword" FormName="LoginForm">
+            <DataAnnotationsValidator />
+
+            <div class="mb-3">
+                <label for="email" class="form-label">メールアドレス</label>
+                <InputText id="email" @bind-Value="loginModel.Email" class="form-control"
+                           placeholder="email@example.com" />
+            </div>
+
+            <div class="mb-3">
+                <label for="password" class="form-label">パスワード</label>
+                <InputText id="password" type="password" @bind-Value="loginModel.Password"
+                           class="form-control" placeholder="パスワード" />
+            </div>
+
+            @if (showTotpField)
+            {
+                <div class="mb-3">
+                    <label for="totpCode" class="form-label">認証コード (6桁)</label>
+                    <InputText id="totpCode" @bind-Value="loginModel.TotpCode"
+                               class="form-control" placeholder="000000" maxlength="6" />
+                    <small class="text-muted">Authenticatorアプリのコードを入力してください</small>
+                </div>
+            }
+
+            <button type="submit" class="btn btn-outline-primary w-100" disabled="@isLoading">
+                @(isLoading ? "ログイン中..." : "ログイン")
+            </button>
+        </EditForm>
+
+        <div class="text-center mt-3">
+            <a href="/register">アカウント作成</a>
+        </div>
+    </div>
+</div>
+
+@code {
+    private LoginModel loginModel = new();
+    private bool isLoading = false;
+    private bool showTotpField = false;
+    private string? errorMessage;
+
+    private async Task LoginWithPassword()
+    {
+        isLoading = true;
+        errorMessage = null;
+
+        try
+        {
+            var request = new HomeLab.Shared.DTOs.LoginRequest(
+                loginModel.Email ?? "",
+                loginModel.Password ?? "",
+                loginModel.TotpCode);
+
+            var response = await Http.PostAsJsonAsync("/api/auth/login", request);
+
+            if (response.IsSuccessStatusCode)
+            {
+                // TODO: JWT保存、認証状態更新
+                Navigation.NavigateTo("/", forceLoad: true);
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                if (error.Contains("TOTP"))
+                {
+                    showTotpField = true;
+                    errorMessage = "TOTPコードが必要です";
+                }
+                else
+                {
+                    errorMessage = "メールアドレスまたはパスワードが間違っています";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"ログインエラー: {ex.Message}";
+            Logger.LogError(ex, "Login failed");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task LoginWithPasskey()
+    {
+        isLoading = true;
+        errorMessage = null;
+
+        try
+        {
+            // TODO: WebAuthn API を呼び出すJavaScript連携
+            errorMessage = "Passkey認証は準備中です";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Passkeyエラー: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private class LoginModel
+    {
+        public string? Email { get; set; }
+        public string? Password { get; set; }
+        public string? TotpCode { get; set; }
+    }
+
+    [Inject] private NavigationManager Navigation { get; set; } = default!;
+}

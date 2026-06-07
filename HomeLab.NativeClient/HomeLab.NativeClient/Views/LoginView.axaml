@@ -1,0 +1,76 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:HomeLab.NativeClient.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="500"
+             x:Class="HomeLab.NativeClient.Views.LoginView"
+             x:DataType="vm:LoginViewModel">
+
+    <Border Background="White" CornerRadius="8" Padding="32" Margin="32"
+            BoxShadow="0 4 12 0 #33000000"
+            MaxWidth="400" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <StackPanel Spacing="16">
+            <!-- タイトル -->
+            <TextBlock Text="{Binding IsLoginMode, Converter={x:Static BoolConverters.Not}}"
+                       FontSize="24" FontWeight="Bold" HorizontalAlignment="Center"/>
+
+            <!-- Passkey ログイン -->
+            <Button Content="Passkeyでログイン"
+                    Command="{Binding LoginWithPasskeyCommand}"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Height="44"
+                    Background="#4285f4" Foreground="White"
+                    CornerRadius="8"/>
+
+            <Separator Height="1" Background="#e0e0e0"/>
+
+            <!-- Email -->
+            <TextBox Text="{Binding Email}"
+                     Watermark="メールアドレス"
+                     IsEnabled="{Binding !IsBusy}"/>
+
+            <!-- Password -->
+            <TextBox Text="{Binding Password}"
+                     Watermark="パスワード"
+                     PasswordChar="*"
+                     IsEnabled="{Binding !IsBusy}"/>
+
+            <!-- DisplayName (登録時のみ) -->
+            <TextBox Text="{Binding DisplayName}"
+                     Watermark="表示名"
+                     IsVisible="{Binding !IsLoginMode}"
+                     IsEnabled="{Binding !IsBusy}"/>
+
+            <!-- TOTP -->
+            <TextBox Text="{Binding TotpCode}"
+                     Watermark="認証コード (6桁)"
+                     IsVisible="{Binding ShowTotpField}"
+                     MaxLength="6"
+                     IsEnabled="{Binding !IsBusy}"/>
+
+            <!-- エラーメッセージ -->
+            <TextBlock Text="{Binding ErrorMessage}"
+                       Foreground="Red" FontSize="12"
+                       IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                       TextWrapping="Wrap"/>
+
+            <!-- 送信ボタン -->
+            <Button Content="{Binding IsLoginMode, Converter={x:Static BoolConverters.Not}}"
+                    Command="{Binding SubmitCommand}"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Height="44"
+                    Background="#2ecc71" Foreground="White"
+                    CornerRadius="8"
+                    IsEnabled="{Binding !IsBusy}"/>
+
+            <!-- モード切替 -->
+            <Button Content="{Binding IsLoginMode, Converter={x:Static BoolConverters.Not}}"
+                    Command="{Binding ToggleModeCommand}"
+                    Background="Transparent" Foreground="#666"
+                    HorizontalAlignment="Center"/>
+        </StackPanel>
+    </Border>
+</UserControl>

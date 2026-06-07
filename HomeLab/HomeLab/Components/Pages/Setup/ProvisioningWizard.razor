@@ -1,0 +1,347 @@
+@page "/setup/provision"
+@attribute [Authorize]
+@inject IJSRuntime JS
+@inject HttpClient Http
+@inject ILogger<ProvisioningWizard> Logger
+
+<PageTitle>ESP32 初期設定</PageTitle>
+
+<div class="container">
+    <h1>ESP32 デバイス初期設定</h1>
+
+    <!-- ステップインジケーター -->
+    <div class="stepper">
+        @for (int i = 1; i <= 6; i++)
+        {
+            <div class="step @(currentStep == i ? "active" : currentStep > i ? "completed" : "")">
+                <span class="step-number">@i</span>
+                <span class="step-label">@GetStepLabel(i)</span>
+            </div>
+        }
+    </div>
+
+    <!-- Step 1: BLE接続 -->
+    @if (currentStep == 1)
+    {
+        <div class="step-content">
+            <h2>Step 1: ESP32に接続</h2>
+            <p>ESP32の電源を入れ、BLEモードになっていることを確認して「接続」を押してください。</p>
+
+            @if (!bleSupported)
+            {
+                <div class="alert alert-warning">
+                    ⚠️ お使いのブラウザはWeb Bluetooth APIをサポートしていません。
+                    Chrome または Edge を使用してください。
+                </div>
+            }
+
+            <button class="btn btn-primary" @onclick="ConnectBle" disabled="@(!bleSupported || isLoading)">
+                @(isLoading ? "接続中..." : "ESP32に接続")
+            </button>
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="alert alert-danger">@errorMessage</div>
+            }
+        </div>
+    }
+
+    <!-- Step 2: WiFi設定 -->
+    @if (currentStep == 2)
+    {
+        <div class="step-content">
+            <h2>Step 2: WiFi 設定</h2>
+            <p>ESP32が接続するWiFiネットワークの情報を入力してください。</p>
+
+            <div class="form-group">
+                <label for="ssid">WiFi SSID</label>
+                <input type="text" id="ssid" @bind="wifiSsid" class="form-control" placeholder="WiFi名" />
+            </div>
+
+            <div class="form-group">
+                <label for="wifiPass">WiFi パスワード</label>
+                <input type="password" id="wifiPass" @bind="wifiPassword" class="form-control" placeholder="パスワード" />
+            </div>
+
+            <button class="btn btn-primary" @onclick="WriteWifiCredentials" disabled="@isLoading">
+                次へ
+            </button>
+        </div>
+    }
+
+    <!-- Step 3: SESAME設定 -->
+    @if (currentStep == 3)
+    {
+        <div class="step-content">
+            <h2>Step 3: SESAME デバイス情報</h2>
+            <p>SESAMEロックのデバイスUUIDとAPI有効化キーを入力してください。</p>
+
+            <div class="form-group">
+                <label for="sesameUuid">SESAME デバイス UUID</label>
+                <input type="text" id="sesameUuid" @bind="sesameUuid" class="form-control" placeholder="例: a1b2c3d4-e5f6-..." />
+            </div>
+
+            <div class="form-group">
+                <label for="sesameKey">SESAME API有効化キー</label>
+                <input type="text" id="sesameKey" @bind="sesameApiKey" class="form-control" placeholder="API Key" />
+            </div>
+
+            <button class="btn btn-primary" @onclick="WriteSesameInfo" disabled="@isLoading">
+                次へ
+            </button>
+        </div>
+    }
+
+    <!-- Step 4: サーバー連携 -->
+    @if (currentStep == 4)
+    {
+        <div class="step-content">
+            <h2>Step 4: サーバーにデバイス登録</h2>
+            <p>デバイスをサーバーに登録し、アクティベーションキーを取得します。</p>
+
+            <div class="form-group">
+                <label for="deviceName">デバイス名</label>
+                <input type="text" id="deviceName" @bind="deviceName" class="form-control" placeholder="例: 玄関の鍵" />
+            </div>
+
+            <button class="btn btn-primary" @onclick="RegisterDevice" disabled="@isLoading">
+                登録してアクティベーションキー取得
+            </button>
+        </div>
+    }
+
+    <!-- Step 5: ESP32に書き込み -->
+    @if (currentStep == 5)
+    {
+        <div class="step-content">
+            <h2>Step 5: 設定をESP32に書き込み</h2>
+            <p>アクティベーションキーとMQTT情報をESP32に送信します。</p>
+
+            <div class="info-box">
+                <p><strong>アクティベーションキー:</strong> @activationKey</p>
+                <p><strong>MQTT URL:</strong> @mqttBrokerUrl</p>
+            </div>
+
+            <button class="btn btn-primary" @onclick="WriteActivationInfo" disabled="@isLoading">
+                ESP32に書き込み
+            </button>
+        </div>
+    }
+
+    <!-- Step 6: 完了 -->
+    @if (currentStep == 6)
+    {
+        <div class="step-content">
+            <h2>✅ 設定完了!</h2>
+            <p>ESP32がWiFiに接続し、サーバーに登録されます。</p>
+            <p>デバイスがオンラインになるまで数十秒お待ちください。</p>
+
+            <a href="/dashboard" class="btn btn-primary">ダッシュボードに戻る</a>
+        </div>
+    }
+</div>
+
+@code {
+    private int currentStep = 1;
+    private bool isLoading = false;
+    private bool bleSupported = false;
+    private string errorMessage = string.Empty;
+
+    // デバイス情報
+    private string deviceId = string.Empty;
+    private string devicePublicKey = string.Empty;
+
+    // WiFi設定
+    private string wifiSsid = string.Empty;
+    private string wifiPassword = string.Empty;
+
+    // SESAME設定
+    private string sesameUuid = string.Empty;
+    private string sesameApiKey = string.Empty;
+
+    // サーバー登録
+    private string deviceName = string.Empty;
+    private string activationKey = string.Empty;
+    private string mqttBrokerUrl = string.Empty;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            bleSupported = await JS.InvokeAsync<bool>("bleProvisioning.isSupported");
+            StateHasChanged();
+        }
+    }
+
+    private async Task ConnectBle()
+    {
+        isLoading = true;
+        errorMessage = string.Empty;
+
+        try
+        {
+            var result = await JS.InvokeAsync<BleResult>("bleProvisioning.connect");
+            if (result.Success)
+            {
+                deviceId = result.DeviceId ?? string.Empty;
+                devicePublicKey = result.PublicKey ?? string.Empty;
+                currentStep = 2;
+            }
+            else
+            {
+                errorMessage = result.Error ?? "接続に失敗しました";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"BLE接続エラー: {ex.Message}";
+            Logger.LogError(ex, "BLE connection failed");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task WriteWifiCredentials()
+    {
+        if (string.IsNullOrEmpty(wifiSsid) || string.IsNullOrEmpty(wifiPassword))
+        {
+            errorMessage = "SSIDとパスワードを入力してください";
+            return;
+        }
+
+        isLoading = true;
+        try
+        {
+            var result = await JS.InvokeAsync<BleResult>("bleProvisioning.writeWifiCredentials", wifiSsid, wifiPassword);
+            if (result.Success)
+            {
+                currentStep = 3;
+                errorMessage = string.Empty;
+            }
+            else
+            {
+                errorMessage = result.Error ?? "書き込みに失敗しました";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"WiFi設定エラー: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task WriteSesameInfo()
+    {
+        if (string.IsNullOrEmpty(sesameUuid))
+        {
+            errorMessage = "SESAME UUIDを入力してください";
+            return;
+        }
+
+        isLoading = true;
+        try
+        {
+            var result = await JS.InvokeAsync<BleResult>("bleProvisioning.writeSesameInfo", sesameUuid, sesameApiKey);
+            if (result.Success)
+            {
+                currentStep = 4;
+                errorMessage = string.Empty;
+            }
+            else
+            {
+                errorMessage = result.Error ?? "書き込みに失敗しました";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"SESAME設定エラー: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task RegisterDevice()
+    {
+        if (string.IsNullOrEmpty(deviceName))
+        {
+            errorMessage = "デバイス名を入力してください";
+            return;
+        }
+
+        isLoading = true;
+        try
+        {
+            var request = new DeviceRegisterRequest(devicePublicKey, deviceId, sesameUuid, sesameApiKey, deviceName);
+            var response = await Http.PostAsJsonAsync("/api/devices/register", request);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<DeviceRegisterResponse>();
+                if (result is not null)
+                {
+                    activationKey = result.ActivationKey;
+                    mqttBrokerUrl = result.MqttBrokerUrl;
+                    currentStep = 5;
+                    errorMessage = string.Empty;
+                }
+            }
+            else
+            {
+                errorMessage = $"サーバー登録エラー: {response.StatusCode}";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"登録エラー: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task WriteActivationInfo()
+    {
+        isLoading = true;
+        try
+        {
+            await JS.InvokeAsync<BleResult>("bleProvisioning.writeActivationKey", activationKey);
+            await JS.InvokeAsync<BleResult>("bleProvisioning.writeMqttBrokerUrl", mqttBrokerUrl);
+            currentStep = 6;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"書き込みエラー: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private string GetStepLabel(int step) => step switch
+    {
+        1 => "BLE接続",
+        2 => "WiFi設定",
+        3 => "SESAME設定",
+        4 => "サーバー登録",
+        5 => "書き込み",
+        6 => "完了",
+        _ => ""
+    };
+
+    private class BleResult
+    {
+        public bool Success { get; set; }
+        public string? Error { get; set; }
+        public string? DeviceId { get; set; }
+        public string? PublicKey { get; set; }
+    }
+}

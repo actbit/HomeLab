@@ -1,0 +1,10 @@
+<Solution>
+  <Project Path="HomeLab.AppHost/HomeLab.AppHost.csproj" />
+  <Project Path="HomeLab.ServiceDefaults/HomeLab.ServiceDefaults.csproj" />
+  <Project Path="HomeLab.Shared/HomeLab.Shared.csproj" />
+  <Project Path="HomeLab/HomeLab/HomeLab.csproj" />
+  <Project Path="HomeLab/HomeLab.Client/HomeLab.Client.csproj" />
+  <Project Path="HomeLab.NativeClient/HomeLab.NativeClient/HomeLab.NativeClient.csproj" />
+  <Project Path="HomeLab.NativeClient/HomeLab.NativeClient.Desktop/HomeLab.NativeClient.Desktop.csproj" />
+  <Project Path="HomeLab.NativeClient/HomeLab.NativeClient.Android/HomeLab.NativeClient.Android.csproj" />
+</Solution>

@@ -1,0 +1,245 @@
+@page "/devices/{id:guid}"
+@attribute [Authorize]
+@inject HttpClient Http
+@inject ILogger<LockControl> Logger
+
+<PageTitle>@(deviceDetail?.Name ?? "デバイス詳細")</PageTitle>
+
+@if (deviceDetail is null)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border" role="status"></div>
+    </div>
+}
+else
+{
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/devices">デバイス管理</a></li>
+            <li class="breadcrumb-item active">@deviceDetail.Name</li>
+        </ol>
+    </nav>
+
+    <div class="row">
+        <!-- デバイス情報 -->
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h3 class="mb-0">📱 @deviceDetail.Name</h3>
+                </div>
+                <div class="card-body">
+                    <table class="table table-borderless">
+                        <tr>
+                            <td class="fw-bold" style="width: 140px;">状態</td>
+                            <td>
+                                <span class="badge @(deviceDetail.Status == Shared.Enums.DeviceStatus.Online ? "bg-success" : "bg-secondary")">
+                                    @deviceDetail.Status
+                                </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="fw-bold">ロック状態</td>
+                            <td class="fs-4">@(deviceDetail.IsLocked ? "🔒 施錠中" : "🔓 解錠中")</td>
+                        </tr>
+                        <tr>
+                            <td class="fw-bold">SESAME UUID</td>
+                            <td><code>@deviceDetail.SesameDeviceUuid</code></td>
+                        </tr>
+                        <tr>
+                            <td class="fw-bold">最終通信</td>
+                            <td>
+                                @(deviceDetail.LastSeenAt.HasValue
+                                    ? deviceDetail.LastSeenAt.Value.LocalDateTime.ToString("yyyy/MM/dd HH:mm:ss")
+                                    : "未接続")
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="fw-bold">登録日</td>
+                            <td>@deviceDetail.CreatedAt.LocalDateTime.ToString("yyyy/MM/dd")</td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ロック操作 -->
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h3 class="mb-0">🔧 操作</h3>
+                </div>
+                <div class="card-body text-center">
+                    @if (deviceDetail.Status == Shared.Enums.DeviceStatus.Online)
+                    {
+                        <div class="d-grid gap-3">
+                            <button class="btn btn-success btn-lg"
+                                    @onclick="Unlock"
+                                    disabled="@isOperating">
+                                🔓 解錠
+                            </button>
+                            <button class="btn btn-danger btn-lg"
+                                    @onclick="Lock"
+                                    disabled="@isOperating">
+                                🔒 施錠
+                            </button>
+                            <button class="btn btn-outline-secondary"
+                                    @onclick="Toggle"
+                                    disabled="@isOperating">
+                                🔄 トグル
+                            </button>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="alert alert-warning">
+                            デバイスがオフラインです。操作にはデバイスがオンラインである必要があります。
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 操作ログ -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h3 class="mb-0">📋 操作履歴</h3>
+            <button class="btn btn-sm btn-outline-primary" @onclick="LoadLogs">更新</button>
+        </div>
+        <div class="card-body">
+            @if (logs.Any())
+            {
+                <table class="table table-sm table-hover">
+                    <thead>
+                        <tr>
+                            <th>日時</th>
+                            <th>操作</th>
+                            <th>トリガー</th>
+                            <th>結果</th>
+                            <th>エラー</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var log in logs)
+                        {
+                            <tr class="@(log.Success ? "" : "table-danger")">
+                                <td>@log.Timestamp.LocalDateTime.ToString("MM/dd HH:mm:ss")</td>
+                                <td>@log.ActionType</td>
+                                <td>@log.TriggeredBy</td>
+                                <td>
+                                    <span class="badge @(log.Success ? "bg-success" : "bg-danger")">
+                                        @(log.Success ? "成功" : "失敗")
+                                    </span>
+                                </td>
+                                <td class="text-danger">@log.ErrorMessage</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            else
+            {
+                <p class="text-muted text-center py-3">操作履歴がありません</p>
+            }
+        </div>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger mt-3">@errorMessage</div>
+}
+
+@code {
+    [Parameter]
+    public Guid Id { get; set; }
+
+    private HomeLab.Shared.DTOs.DeviceDetail? deviceDetail;
+    private List<HomeLab.Shared.DTOs.LockLogEntry> logs = [];
+    private bool isLoading = false;
+    private bool isOperating = false;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDevice();
+        await LoadLogs();
+    }
+
+    private async Task LoadDevice()
+    {
+        isLoading = true;
+        try
+        {
+            deviceDetail = await Http.GetFromJsonAsync<HomeLab.Shared.DTOs.DeviceDetail>($"/api/devices/{Id}");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"デバイス情報の取得に失敗: {ex.Message}";
+            Logger.LogError(ex, "Failed to load device {Id}", Id);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task LoadLogs()
+    {
+        try
+        {
+            var result = await Http.GetFromJsonAsync<List<HomeLab.Shared.DTOs.LockLogEntry>>($"/api/devices/{Id}/logs");
+            logs = result ?? [];
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load logs for device {Id}", Id);
+        }
+    }
+
+    private async Task Unlock()
+    {
+        await ExecuteAction(Shared.Enums.LockActionType.Unlock);
+    }
+
+    private async Task Lock()
+    {
+        await ExecuteAction(Shared.Enums.LockActionType.Lock);
+    }
+
+    private async Task Toggle()
+    {
+        await ExecuteAction(Shared.Enums.LockActionType.Toggle);
+    }
+
+    private async Task ExecuteAction(Shared.Enums.LockActionType action)
+    {
+        isOperating = true;
+        errorMessage = null;
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync(
+                $"/api/locks/{Id}/action",
+                new HomeLab.Shared.DTOs.LockActionRequest(action));
+
+            if (response.IsSuccessStatusCode)
+            {
+                await LoadDevice();
+                await LoadLogs();
+            }
+            else
+            {
+                errorMessage = "操作に失敗しました";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"操作エラー: {ex.Message}";
+        }
+        finally
+        {
+            isOperating = false;
+        }
+    }
+}

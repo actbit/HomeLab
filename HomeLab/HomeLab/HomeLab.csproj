@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\HomeLab.ServiceDefaults\HomeLab.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\HomeLab.Client\HomeLab.Client.csproj" />
+    <ProjectReference Include="..\..\HomeLab.Shared\HomeLab.Shared.csproj" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.8" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.8" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.8" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.2" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.8" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.8" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.8" />
+    <PackageReference Include="Finbuckle.MultiTenant" Version="10.1.0" />
+    <PackageReference Include="Finbuckle.MultiTenant.AspNetCore" Version="10.1.0" />
+    <PackageReference Include="Finbuckle.MultiTenant.Abstractions" Version="10.1.0" />
+    <PackageReference Include="Finbuckle.MultiTenant.EntityFrameworkCore" Version="10.1.0" />
+    <PackageReference Include="Fido2" Version="4.0.1" />
+    <PackageReference Include="MQTTnet" Version="5.1.0.1559" />
+    <PackageReference Include="MQTTnet.AspNetCore" Version="5.1.0.1559" />
+    <PackageReference Include="Otp.NET" Version="1.4.1" />
+    <PackageReference Include="QRCoder" Version="1.8.0" />
+  </ItemGroup>
+
+</Project>

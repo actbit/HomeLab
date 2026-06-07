@@ -1,0 +1,132 @@
+@page "/"
+@attribute [Authorize]
+@inject HttpClient Http
+@inject ILogger<Home> Logger
+
+<PageTitle>ダッシュボード</PageTitle>
+
+<div class="dashboard-header">
+    <h1>🏠 ダッシュボード</h1>
+    <button class="btn btn-outline-primary" @onclick="RefreshDevices">
+        🔄 更新
+    </button>
+</div>
+
+@if (isLoading)
+{
+    <div class="loading-spinner">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">読み込み中...</span>
+        </div>
+    </div>
+}
+else if (devices.Any())
+{
+    <div class="device-grid">
+        @foreach (var device in devices)
+        {
+            <div class="device-card @(device.IsLocked ? "card-locked" : "card-unlocked")">
+                <div class="device-status-indicator @(device.Status == HomeLab.Shared.Enums.DeviceStatus.Online ? "online" : "offline")"></div>
+                <div class="device-info">
+                    <h3>@device.Name</h3>
+                    <p class="device-meta">
+                        <span class="status-badge">@device.Status</span>
+                        <span class="lock-state">@(device.IsLocked ? "🔒 施錠" : "🔓 解錠")</span>
+                    </p>
+                    <p class="last-seen">
+                        @(device.LastSeenAt.HasValue
+                            ? $"最終通信: {device.LastSeenAt.Value.LocalDateTime:yyyy/MM/dd HH:mm:ss}"
+                            : "未接続")
+                    </p>
+                </div>
+                <div class="device-actions">
+                    @if (device.Status == HomeLab.Shared.Enums.DeviceStatus.Online)
+                    {
+                        <button class="btn @(device.IsLocked ? "btn-success" : "btn-danger") btn-sm"
+                                @onclick="() => ToggleLock(device.Id)"
+                                disabled="@operatingDeviceId.HasValue">
+                            @(device.IsLocked ? "🔓 解錠" : "🔒 施錠")
+                        </button>
+                    }
+                    <a href="/devices/@device.Id" class="btn btn-outline-secondary btn-sm">詳細</a>
+                </div>
+            </div>
+        }
+    </div>
+}
+else
+{
+    <div class="empty-state">
+        <h2>📱 デバイスが登録されていません</h2>
+        <p>ESP32デバイスをセットアップして、スマートロックを追加しましょう。</p>
+        <a href="/setup/provision" class="btn btn-primary">デバイスを追加</a>
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="alert alert-danger mt-3">@errorMessage</div>
+}
+
+@code {
+    private List<HomeLab.Shared.DTOs.DeviceListItem> devices = [];
+    private bool isLoading = false;
+    private string? errorMessage;
+    private Guid? operatingDeviceId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshDevices();
+    }
+
+    private async Task RefreshDevices()
+    {
+        isLoading = true;
+        errorMessage = null;
+
+        try
+        {
+            var result = await Http.GetFromJsonAsync<List<HomeLab.Shared.DTOs.DeviceListItem>>("/api/devices");
+            devices = result ?? [];
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"デバイス一覧の取得に失敗しました: {ex.Message}";
+            Logger.LogError(ex, "Failed to load devices");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task ToggleLock(Guid deviceId)
+    {
+        operatingDeviceId = deviceId;
+        errorMessage = null;
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync(
+                $"/api/locks/{deviceId}/action",
+                new HomeLab.Shared.DTOs.LockActionRequest(HomeLab.Shared.Enums.LockActionType.Toggle));
+
+            if (response.IsSuccessStatusCode)
+            {
+                await RefreshDevices();
+            }
+            else
+            {
+                errorMessage = "ロック操作に失敗しました";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"ロック操作エラー: {ex.Message}";
+        }
+        finally
+        {
+            operatingDeviceId = null;
+        }
+    }
+}

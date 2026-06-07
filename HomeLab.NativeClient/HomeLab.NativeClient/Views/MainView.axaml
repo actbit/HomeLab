@@ -1,0 +1,53 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+                xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+                xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+                xmlns:vm="using:HomeLab.NativeClient.ViewModels"
+                mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="600"
+                x:Class="HomeLab.NativeClient.Views.MainView"
+                x:DataType="vm:MainViewModel">
+
+    <Design.DataContext>
+        <vm:MainViewModel />
+    </Design.DataContext>
+
+    <Grid RowDefinitions="Auto,*,Auto">
+        <!-- ヘッダーバー -->
+        <Border Grid.Row="0" Background="#1a1a2e" Padding="16,10">
+            <Grid ColumnDefinitions="Auto,*,Auto">
+                <TextBlock Grid.Column="0"
+                           Text="HomeLab"
+                           FontSize="20" FontWeight="Bold"
+                           Foreground="White"
+                           VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1"
+                           Text="{Binding Greeting}"
+                           FontSize="14"
+                           Foreground="#aaaaaa"
+                           VerticalAlignment="Center"
+                           Margin="16,0,0,0"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                    <Button Content="ダッシュボード"
+                            Command="{Binding NavigateDashboardCommand}"
+                            Background="Transparent"
+                            Foreground="White"/>
+                    <Button Content="ログアウト"
+                            Command="{Binding LogoutCommand}"
+                            Background="Transparent"
+                            Foreground="#ff6b6b"
+                            IsVisible="{Binding IsLoggedIn}"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- メインコンテンツ -->
+        <ContentControl Grid.Row="1" Content="{Binding CurrentView}" />
+
+        <!-- ステータスバー -->
+        <Border Grid.Row="2" Background="#f0f0f0" Padding="8,4">
+            <TextBlock Text="{Binding ErrorMessage}"
+                       Foreground="Red"
+                       FontSize="12"/>
+        </Border>
+    </Grid>
+</UserControl>
