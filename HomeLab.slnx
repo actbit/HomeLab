@@ -1,4 +1,8 @@
 <Solution>
+  <Folder Name="/HomeLab/" />
+  <Folder Name="/HomeLab/HomeLab.Tests/">
+    <Project Path="HomeLab/HomeLab.Tests/HomeLab.Server.Tests/HomeLab.Server.Tests.csproj" />
+  </Folder>
   <Project Path="HomeLab.AppHost/HomeLab.AppHost.csproj" />
   <Project Path="HomeLab.ServiceDefaults/HomeLab.ServiceDefaults.csproj" />
   <Project Path="HomeLab.Shared/HomeLab.Shared.csproj" />
