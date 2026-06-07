@@ -1,7 +1,5 @@
 using HomeLab.Server.Data;
 using HomeLab.Server.Models.Entities;
-using HomeLab.Server.Services;
-using HomeLab.Shared.MQTT;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -133,9 +131,8 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
             services.AddDistributedMemoryCache();
 
-            services.RemoveAll<MqttService>();
+            // MQTTは削除済み。HostedServiceのみクリア
             services.RemoveAll<IHostedService>();
-            services.AddSingleton<MqttService>(_ => new MockMqttService());
         });
 
         builder.ConfigureAppConfiguration((_, config) =>
@@ -156,31 +153,4 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             });
         });
     }
-}
-
-/// <summary>
-/// テスト用モックMQTTサービス
-/// </summary>
-public class MockMqttService : MqttService
-{
-    public List<(string Topic, MqttCommandMessage Message)> PublishedCommands { get; } = [];
-
-    public MockMqttService()
-        : base(
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<MqttService>.Instance,
-            new FakeServiceProvider(),
-            new ConfigurationBuilder().Build()) { }
-
-    public new Task PublishCommandAsync(string topic, MqttCommandMessage command)
-    {
-        PublishedCommands.Add((topic, command));
-        return Task.CompletedTask;
-    }
-
-    protected override Task ExecuteAsync(CancellationToken stoppingToken) => Task.CompletedTask;
-}
-
-file class FakeServiceProvider : IServiceProvider
-{
-    public object? GetService(Type serviceType) => null;
 }

@@ -4,7 +4,6 @@ using HomeLab.Server.Models.Entities;
 using HomeLab.Server.Services;
 using HomeLab.Shared.DTOs;
 using HomeLab.Shared.Enums;
-using HomeLab.Shared.MQTT;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -12,6 +11,7 @@ namespace HomeLab.Server.API;
 
 /// <summary>
 /// ロック操作のMinimal APIエンドポイント
+/// コマンドはWebSocket経由でESP32に送信
 /// </summary>
 public static class LockEndpoints
 {
@@ -26,7 +26,7 @@ public static class LockEndpoints
             Guid id,
             [FromBody] LockActionRequest request,
             AppDbContext dbContext,
-            MqttService mqttService,
+            DeviceConnectionService connectionService,
             HttpContext httpContext) =>
         {
             var userId = httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -48,14 +48,15 @@ public static class LockEndpoints
                 return Results.BadRequest(new { error = "Device is offline" });
             }
 
-            // MQTTコマンド送信
+            // WebSocket経由でコマンド送信
             var requestId = Guid.NewGuid().ToString("N")[..16];
-            var commandTopic = MqttTopics.Command(userId, device.Id.ToString());
+            var action = request.Action.ToString().ToLowerInvariant();
 
-            await mqttService.PublishCommandAsync(commandTopic, new MqttCommandMessage(
-                request.Action.ToString().ToLowerInvariant(),
-                requestId,
-                DateTimeOffset.UtcNow));
+            var sent = await connectionService.SendCommandAsync(device.Id, action, requestId);
+            if (!sent)
+            {
+                return Results.BadRequest(new { error = "Device not connected" });
+            }
 
             // 操作ログ記録
             var log = new LockLog

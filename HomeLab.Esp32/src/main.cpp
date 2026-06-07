@@ -6,17 +6,17 @@
  *    Web BLE経由でWiFi/SESAME/サーバー設定を受け取る
  *
  * 2. Operational Mode - 通常運用時
- *    WiFi接続 → MQTT接続 → ハートビート送信 → コマンド待受
- *    コマンド受信 → SESAME BLE制御 → 結果をMQTTで通知
+ *    WiFi接続 → WebSocket接続 → ハートビート送信 → コマンド待受
+ *    コマンド受信 → SESAME BLE制御 → 結果をWebSocketで通知
  *
+ * 通信: WebSocket (MQTT Broker不要・サーバー内蔵)
  * SESAME制御: libsesame3bt を使用
- * 対応: SESAME 3/4/5/5 PRO, bot/bot2, 3 bike
  */
 
 #include <Arduino.h>
 #include "config.h"
 #include "wifi_manager.h"
-#include "mqtt_client.h"
+#include "websocket_client.h"
 #include "sesame_ble.h"
 #include "ble_provisioning.h"
 #include "crypto.h"
@@ -24,7 +24,7 @@
 
 // グローバルインスタンス
 Config::DeviceConfig deviceConfig;
-MqttClient mqttClient;
+WebSocketClient wsClient;
 SesameBle sesame;
 BleProvisioning bleProv;
 
@@ -131,25 +131,20 @@ void startOperationalMode() {
         ESP.restart();
     }
 
-    // MQTT接続
-    mqttClient.begin(
-        deviceConfig.mqttBrokerUrl,
-        deviceConfig.mqttBrokerPort.toInt(),
-        deviceConfig.deviceId
+    // WebSocket接続 (サーバーに内蔵・MQTT Broker不要)
+    wsClient.begin(
+        deviceConfig.mqttBrokerUrl,     // サーバーホスト
+        deviceConfig.mqttBrokerPort.toInt(),  // サーバーポート
+        deviceConfig.deviceId,           // デバイス識別子
+        deviceConfig.activationKey       // 認証キー
     );
 
     // コマンドコールバック設定
-    mqttClient.onCommand([](const String& action, const String& requestId) {
+    wsClient.onCommand([](const String& action, const String& requestId) {
         handleCommand(action, requestId);
     });
 
-    // MQTT接続 (テナントIDはアクティベーションキーから取得)
-    if (!mqttClient.connect("pending-tenant")) {
-        Serial.println("[MAIN] MQTT connection failed, will retry in loop");
-    }
-
     // SESAME初期化
-    // SESAME UUIDからBLEアドレスを解決
     String sesameAddr = resolveSesameAddress(deviceConfig.sesameUuid);
     if (sesameAddr.length() > 0) {
         sesame.begin(sesameAddr, deviceConfig.sesameApiKey);
@@ -169,8 +164,8 @@ void operationalLoop() {
         WifiManager::connect(deviceConfig.wifiSsid, deviceConfig.wifiPassword);
     }
 
-    // MQTTループ
-    mqttClient.loop();
+    // WebSocketループ
+    wsClient.loop();
 
     // SESAME ループ (BLEイベント処理)
     sesame.loop();
@@ -179,8 +174,8 @@ void operationalLoop() {
     if (millis() - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
         lastHeartbeat = millis();
 
-        if (mqttClient.isConnected()) {
-            mqttClient.publishHeartbeat(
+        if (wsClient.isConnected()) {
+            wsClient.publishHeartbeat(
                 sesame.isLocked(),
                 sesame.getBatteryLevel(),
                 WifiManager::getRssi()
@@ -207,7 +202,7 @@ void handleCommand(const String& action, const String& requestId) {
     // SESAMEにBLE接続 (必要時のみ)
     if (!sesame.isConnected()) {
         if (!sesame.connect()) {
-            mqttClient.publishStatus("error", requestId, false, "SESAME BLE connection failed");
+            wsClient.publishStatus("error", requestId, false, "SESAME BLE connection failed");
             return;
         }
     }
@@ -226,12 +221,12 @@ void handleCommand(const String& action, const String& requestId) {
         state = sesame.isLocked() ? "locked" : "unlocked";
         success = true;
     } else {
-        mqttClient.publishStatus("error", requestId, false, "Unknown action: " + action);
+        wsClient.publishStatus("error", requestId, false, "Unknown action: " + action);
         return;
     }
 
-    // 結果をMQTTで通知
-    mqttClient.publishStatus(state, requestId, success);
+    // 結果をWebSocketで通知
+    wsClient.publishStatus(state, requestId, success);
 
     Serial.printf("[CMD] Result: %s, Success: %s\n", state.c_str(), success ? "true" : "false");
 }

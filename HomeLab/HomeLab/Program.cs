@@ -5,6 +5,7 @@ using HomeLab.Server.Authentication.Totp;
 using HomeLab.Server.Data;
 using HomeLab.Server.Data.DbProviders;
 using HomeLab.Server.Hubs;
+using HomeLab.Server.Middleware;
 using HomeLab.Server.Models.Entities;
 using HomeLab.Server.Services;
 using HomeLab.Server.Tenancy;
@@ -83,10 +84,9 @@ public partial class Program
         // マルチテナンシー (Finbuckle)
         builder.Services.AddMultiTenancy(builder.Configuration);
 
-        // MQTT バックグラウンドサービス
-        builder.Services.AddHostedService<MqttService>();
-        builder.Services.AddSingleton<MqttService>(sp =>
-            sp.GetServices<IHostedService>().OfType<MqttService>().First());
+        // ESP32 WebSocket接続管理 (MQTT不要・サーバー内蔵)
+        builder.Services.AddSingleton<DeviceConnectionService>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<DeviceConnectionService>());
 
         // SignalR (リアルタイム通知)
         builder.Services.AddSignalR(options =>
@@ -127,6 +127,12 @@ public partial class Program
         app.UseHttpsRedirection();
         app.UseStaticFiles();
 
+        // WebSocket (ESP32デバイス接続用)
+        app.UseWebSockets(new WebSocketOptions
+        {
+            KeepAliveInterval = TimeSpan.FromSeconds(30)
+        });
+
         // テスト環境ではAntiforgeryを無効化 (APIテスト用)
         if (!app.Environment.IsEnvironment("Testing"))
         {
@@ -150,6 +156,9 @@ public partial class Program
 
         // SignalR Hub
         app.MapHub<LockHub>("/hubs/lock");
+
+        // ESP32 WebSocket エンドポイント
+        app.MapDeviceWebSocket();
 
         // Minimal API エンドポイント
         app.MapAuthEndpoints();
