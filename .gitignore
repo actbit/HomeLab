@@ -361,3 +361,12 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# PlatformIO
+HomeLab.Esp32/.pio/
+HomeLab.Esp32/.vscode/
+
+# SQLite databases
+*.db
+*.db-shm
+*.db-wal

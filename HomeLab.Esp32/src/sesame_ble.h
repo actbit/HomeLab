@@ -1,92 +1,130 @@
 #pragma once
 
 #include <Arduino.h>
-#include <NimBLEDevice.h>
+#include <libsesame3bt/Sesame.h>
+#include <libsesame3bt/SesameClient.h>
+#include <libsesame3bt/SesameScanner.h>
 
 /**
  * SESAME スマートロック BLE制御
- * SESAMEデバイスに直接BLE接続して施錠/解錠を行う
+ * libsesame3bt を使用してSESAMEデバイスに直接BLE接続し施錠/解錠を行う
+ *
+ * 対応デバイス:
+ * - SESAME 3 / 4 / 5 / 5 PRO
+ * - SESAME bot / bot 2
+ * - SESAME 3 bike (Cycle)
  */
 class SesameBle {
 public:
     /**
      * 初期化
-     * @param sesameUuid SESAMEデバイスのBLE UUID
-     * @param apiKey SESAME API有効化キー
+     * @param deviceAddress SESAMEのBLE MACアドレス (例: "xx:xx:xx:xx:xx:xx")
+     * @param secretKey SESAMEのシークレットキー (API有効化キーから取得)
+     * @param model SESAMEモデル種別
      */
-    void begin(const String& sesameUuid, const String& apiKey) {
-        _sesameUuid = sesameUuid;
-        _apiKey = apiKey;
-        _connected = false;
+    void begin(const String& deviceAddress, const String& secretKey,
+               libsesame3bt::Sesame::model_t model = libsesame3bt::Sesame::model_t::sesame_5) {
+        _secretKey = secretKey;
+        _model = model;
+
+        // BLEアドレス設定
+        _address = BLEAddress(deviceAddress.c_str(), BLE_ADDR_RANDOM);
+        Serial.printf("[SESAME] Initialized for %s (model=%d)\n",
+                      deviceAddress.c_str(), static_cast<int>(model));
     }
 
     /**
      * SESAMEにBLE接続
      */
     bool connect() {
-        Serial.printf("[SESAME] Connecting to %s...\n", _sesameUuid.c_str());
-
-        NimBLEDevice::init("HomeLock-ESP32");
-
-        NimBLEAdvertisedDevice* device = scanForDevice(_sesameUuid);
-        if (!device) {
-            Serial.println("[SESAME] Device not found");
-            return false;
+        if (_connected) {
+            Serial.println("[SESAME] Already connected");
+            return true;
         }
 
-        NimBLEClient* client = NimBLEDevice::createClient();
-        if (!client->connect(device)) {
+        Serial.println("[SESAME] Connecting...");
+
+        _client.begin(_address, _model);
+        _client.set_keys("", _secretKey.c_str());
+
+        if (!_client.connect()) {
             Serial.println("[SESAME] Connection failed");
             return false;
         }
 
-        Serial.println("[SESAME] Connected");
+        // 接続完了待ち (ステータス受信で判定)
+        unsigned long start = millis();
+        while (!_client.isReady() && millis() - start < 10000) {
+            _client.loop();
+            delay(50);
+        }
+
+        if (!_client.isReady()) {
+            Serial.println("[SESAME] Connection timeout");
+            disconnect();
+            return false;
+        }
+
         _connected = true;
 
-        // SESAMEのBLEサービス・キャラクタリスティックを検索
-        // 注: 実際のSESAMEプロトコルは非公開のため、
-        // SESAME SDK/オープンソース実装を参考に実装が必要
-        // ここではインターフェースのみ定義
+        // 現在のロック状態を取得
+        auto status = _client.getStatus();
+        if (status.has_value()) {
+            _isLocked = (status.value() == libsesame3bt::Sesame::status_t::locked);
+            Serial.printf("[SESAME] Connected! Status: %s\n",
+                          _isLocked ? "LOCKED" : "UNLOCKED");
+        }
 
         return true;
     }
 
     /**
      * 解錠
+     * @param tag 操作履歴に記録されるタグ (ユーザー名等)
      */
-    bool unlock() {
+    bool unlock(const char* tag = "HomeLock") {
         if (!_connected) {
             Serial.println("[SESAME] Not connected");
             return false;
         }
 
-        Serial.println("[SESAME] Unlocking...");
-        // TODO: SESAME BLE コマンド送信
-        // 実際の実装はSESAMEプロトコルに依存
-        _isLocked = false;
-        return true;
+        Serial.printf("[SESAME] Unlocking... (tag: %s)\n", tag);
+        bool result = _client.unlock(tag);
+        if (result) {
+            _isLocked = false;
+            Serial.println("[SESAME] Unlock successful");
+        } else {
+            Serial.println("[SESAME] Unlock failed");
+        }
+        return result;
     }
 
     /**
      * 施錠
+     * @param tag 操作履歴に記録されるタグ
      */
-    bool lock() {
+    bool lock(const char* tag = "HomeLock") {
         if (!_connected) {
             Serial.println("[SESAME] Not connected");
             return false;
         }
 
-        Serial.println("[SESAME] Locking...");
-        // TODO: SESAME BLE コマンド送信
-        _isLocked = true;
-        return true;
+        Serial.printf("[SESAME] Locking... (tag: %s)\n", tag);
+        bool result = _client.lock(tag);
+        if (result) {
+            _isLocked = true;
+            Serial.println("[SESAME] Lock successful");
+        } else {
+            Serial.println("[SESAME] Lock failed");
+        }
+        return result;
     }
 
     /**
      * トグル (施錠↔解錠)
      */
-    bool toggle() {
-        return _isLocked ? unlock() : lock();
+    bool toggle(const char* tag = "HomeLock") {
+        return _isLocked ? unlock(tag) : lock(tag);
     }
 
     /**
@@ -94,39 +132,62 @@ public:
      */
     void disconnect() {
         if (_connected) {
-            NimBLEDevice::deleteAllBonds();
+            _client.disconnect();
             _connected = false;
             Serial.println("[SESAME] Disconnected");
         }
     }
 
-    bool isConnected() const { return _connected; }
-    bool isLocked() const { return _isLocked; }
-
-private:
-    String _sesameUuid;
-    String _apiKey;
-    bool _connected = false;
-    bool _isLocked = true;
+    /**
+     * ループ処理 (メインループで呼び出し)
+     * BLEイベント処理を行う
+     */
+    void loop() {
+        if (_connected) {
+            _client.loop();
+        }
+    }
 
     /**
-     * 指定UUIDのデバイスをスキャン
+     * 接続状態取得
      */
-    NimBLEAdvertisedDevice* scanForDevice(const String& uuid) {
-        NimBLEScan* scan = NimBLEDevice::getScan();
-        scan->setActiveScan(true);
-        scan->setInterval(100);
-        scan->setWindow(99);
+    bool isConnected() const { return _connected; }
 
-        NimBLEScanResults results = scan->start(10, false);
+    /**
+     * ロック状態取得
+     */
+    bool isLocked() const { return _isLocked; }
 
-        for (int i = 0; i < results.getCount(); i++) {
-            NimBLEAdvertisedDevice* device = results.getDevice(i);
-            if (device->getServiceUUID() == NimBLEUUID(uuid.c_str())) {
-                return device;
-            }
+    /**
+     * バッテリーレベル取得 (%)
+     */
+    int getBatteryLevel() const {
+        if (!_connected) return -1;
+        auto batt = _client.getBatteryVoltage();
+        if (batt.has_value()) {
+            // CR2032電圧 3.0V=100%, 2.0V=0% の簡易換算
+            int pct = static_cast<int>((batt.value() - 2.0f) / 1.0f * 100.0f);
+            return constrain(pct, 0, 100);
         }
-
-        return nullptr;
+        return -1;
     }
+
+    /**
+     * ステータス更新 (接続中に状態変化があった場合)
+     */
+    void updateStatus() {
+        if (!_connected) return;
+        auto status = _client.getStatus();
+        if (status.has_value()) {
+            _isLocked = (status.value() == libsesame3bt::Sesame::status_t::locked);
+        }
+    }
+
+private:
+    libsesame3bt::SesameClient _client;
+    BLEAddress _address{""};
+    String _secretKey;
+    libsesame3bt::Sesame::model_t _model = libsesame3bt::Sesame::model_t::sesame_5;
+    bool _connected = false;
+    bool _isLocked = true;
 };

@@ -2,6 +2,7 @@
 @attribute [Authorize]
 @inject HttpClient Http
 @inject ILogger<PasskeyManage> Logger
+@inject IJSRuntime JSRuntime
 
 <PageTitle>パスキー管理</PageTitle>
 
@@ -115,8 +116,21 @@ else
 
         try
         {
-            // TODO: WebAuthn JavaScript連携 → サーバーに登録
-            ShowMessage("Passkey登録機能はWebAuthn JS連携の実装が必要です", true);
+            // WebAuthn JS連携 → サーバーにPasskey登録
+            var apiBase = Navigation.BaseUri.TrimEnd('/');
+            var userId = ""; // TODO: 認証状態から取得
+            var deviceName = $"Browser ({GetBrowserName()})";
+            var result = await JSRuntime.InvokeAsync<PasskeyResult>("passkeyAuth.register", userId, apiBase, deviceName);
+
+            if (result.Success)
+            {
+                ShowMessage("パスキーを登録しました", false);
+                await LoadPasskeys();
+            }
+            else
+            {
+                ShowMessage(result.Error ?? "パスキー登録に失敗しました", true);
+            }
         }
         catch (Exception ex)
         {
@@ -162,5 +176,21 @@ else
         isError = error;
     }
 
+    private string GetBrowserName()
+    {
+        var ua = UserAgent ?? "";
+        if (ua.Contains("Edg/")) return "Edge";
+        if (ua.Contains("Chrome/")) return "Chrome";
+        if (ua.Contains("Firefox/")) return "Firefox";
+        if (ua.Contains("Safari/")) return "Safari";
+        return "Browser";
+    }
+
     private record PasskeyInfo(Guid Id, string? Name, string AuthenticatorType, DateTimeOffset CreatedAt, DateTimeOffset? LastUsedAt);
+    private record PasskeyResult(bool Success, string? Error = null, string? Token = null);
+
+    [Inject] private NavigationManager Navigation { get; set; } = default!;
+    [Inject] private IHttpContextAccessor HttpContextAccessor { get; set; } = default!;
+
+    private string? UserAgent => HttpContextAccessor.HttpContext?.Request.Headers.UserAgent;
 }

@@ -8,6 +8,9 @@
  * 2. Operational Mode - 通常運用時
  *    WiFi接続 → MQTT接続 → ハートビート送信 → コマンド待受
  *    コマンド受信 → SESAME BLE制御 → 結果をMQTTで通知
+ *
+ * SESAME制御: libsesame3bt を使用
+ * 対応: SESAME 3/4/5/5 PRO, bot/bot2, 3 bike
  */
 
 #include <Arduino.h>
@@ -17,6 +20,7 @@
 #include "sesame_ble.h"
 #include "ble_provisioning.h"
 #include "crypto.h"
+#include <libsesame3bt/SesameScanner.h>
 
 // グローバルインスタンス
 Config::DeviceConfig deviceConfig;
@@ -26,10 +30,30 @@ BleProvisioning bleProv;
 
 // ハートビート間隔
 constexpr uint32_t HEARTBEAT_INTERVAL_MS = 30000;  // 30秒
-constexpr uint32_t COMMAND_TIMEOUT_MS = 10000;      // 10秒
 
 unsigned long lastHeartbeat = 0;
 bool operationalMode = false;
+
+// SESAMEのBLE MACアドレスをUUIDから解決
+String resolveSesameAddress(const String& uuid) {
+    using libsesame3bt::SesameScanner;
+    using libsesame3bt::SesameInfo;
+
+    SesameScanner& scanner = SesameScanner::get();
+    String result;
+
+    Serial.printf("[SESAME] Scanning for UUID: %s\n", uuid.c_str());
+
+    scanner.scan(10000, [&uuid, &result](SesameScanner& /*scanner*/, const SesameInfo* info) {
+        if (info && info->uuid.toString() == uuid.c_str()) {
+            result = info->address.toString().c_str();
+            Serial.printf("[SESAME] Found! Address: %s, Model: %d\n",
+                          result.c_str(), static_cast<int>(info->model));
+        }
+    });
+
+    return result;
+}
 
 /**
  * 初期化
@@ -43,11 +67,9 @@ void setup() {
     deviceConfig = Config::load();
 
     if (deviceConfig.configured) {
-        // 設定済み → 運用モード
         Serial.println("[MAIN] Configured, entering operational mode");
         startOperationalMode();
     } else {
-        // 未設定 → プロビジョニングモード
         Serial.println("[MAIN] Not configured, entering provisioning mode");
         startProvisioningMode();
     }
@@ -84,13 +106,11 @@ void startProvisioningMode() {
 }
 
 void provisioningLoop() {
-    // 設定が完了するまで待機
     if (bleProv.isConfigured()) {
         Serial.println("[MAIN] Provisioning complete, restarting...");
         bleProv.stop();
         delay(1000);
 
-        // 設定を再読込して運用モードへ
         deviceConfig = Config::load();
         startOperationalMode();
     }
@@ -123,15 +143,21 @@ void startOperationalMode() {
         handleCommand(action, requestId);
     });
 
-    // MQTT接続
-    // テナントID = アクティベーションキーを使用 (簡易実装)
-    // 実際はアクティベーションキーからテナントIDを取得するフローが必要
+    // MQTT接続 (テナントIDはアクティベーションキーから取得)
     if (!mqttClient.connect("pending-tenant")) {
         Serial.println("[MAIN] MQTT connection failed, will retry in loop");
     }
 
     // SESAME初期化
-    sesame.begin(deviceConfig.sesameUuid, deviceConfig.sesameApiKey);
+    // SESAME UUIDからBLEアドレスを解決
+    String sesameAddr = resolveSesameAddress(deviceConfig.sesameUuid);
+    if (sesameAddr.length() > 0) {
+        sesame.begin(sesameAddr, deviceConfig.sesameApiKey);
+        Serial.println("[MAIN] SESAME initialized");
+    } else {
+        Serial.println("[MAIN] WARNING: SESAME device not found during scan");
+        sesame.begin(deviceConfig.sesameUuid, deviceConfig.sesameApiKey);
+    }
 
     lastHeartbeat = millis();
 }
@@ -146,6 +172,9 @@ void operationalLoop() {
     // MQTTループ
     mqttClient.loop();
 
+    // SESAME ループ (BLEイベント処理)
+    sesame.loop();
+
     // ハートビート送信
     if (millis() - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
         lastHeartbeat = millis();
@@ -153,10 +182,13 @@ void operationalLoop() {
         if (mqttClient.isConnected()) {
             mqttClient.publishHeartbeat(
                 sesame.isLocked(),
-                100,  // バッテリーレベル (ESP32自身、固定値)
+                sesame.getBatteryLevel(),
                 WifiManager::getRssi()
             );
         }
+
+        // 定期的にSESAMEのステータス更新
+        sesame.updateStatus();
     }
 
     delay(10);
@@ -181,15 +213,16 @@ void handleCommand(const String& action, const String& requestId) {
     }
 
     if (action == "unlock") {
-        success = sesame.unlock();
+        success = sesame.unlock("HomeLock");
         state = "unlocked";
     } else if (action == "lock") {
-        success = sesame.lock();
+        success = sesame.lock("HomeLock");
         state = "locked";
     } else if (action == "toggle") {
-        success = sesame.toggle();
+        success = sesame.toggle("HomeLock");
         state = sesame.isLocked() ? "locked" : "unlocked";
     } else if (action == "status") {
+        sesame.updateStatus();
         state = sesame.isLocked() ? "locked" : "unlocked";
         success = true;
     } else {

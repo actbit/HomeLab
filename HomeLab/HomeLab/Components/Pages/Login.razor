@@ -1,6 +1,7 @@
 @page "/login"
 @inject HttpClient Http
 @inject ILogger<Login> Logger
+@inject IJSRuntime JSRuntime
 
 <PageTitle>ログイン</PageTitle>
 
@@ -118,12 +119,23 @@
 
         try
         {
-            // TODO: WebAuthn API を呼び出すJavaScript連携
-            errorMessage = "Passkey認証は準備中です";
+            var apiBase = Navigation.BaseUri.TrimEnd('/');
+            var result = await JSRuntime.InvokeAsync<PasskeyResult>("passkeyAuth.login", apiBase, (string?)null);
+
+            if (result.Success && !string.IsNullOrEmpty(result.Token))
+            {
+                // TODO: JWTをローカルストレージに保存、認証状態更新
+                Navigation.NavigateTo("/", forceLoad: true);
+            }
+            else
+            {
+                errorMessage = result.Error ?? "Passkey認証に失敗しました";
+            }
         }
         catch (Exception ex)
         {
             errorMessage = $"Passkeyエラー: {ex.Message}";
+            Logger.LogError(ex, "Passkey login failed");
         }
         finally
         {
@@ -139,4 +151,6 @@
     }
 
     [Inject] private NavigationManager Navigation { get; set; } = default!;
+
+    private record PasskeyResult(bool Success, string? Error = null, string? Token = null);
 }
