@@ -1,6 +1,4 @@
-using System.Text.Json;
-using System.Net.Http.Json;
-using HomeLab.NativeClient.Services;
+using Microsoft.Extensions.Logging;
 
 namespace HomeLab.NativeClient.Services;
 
@@ -91,12 +89,4 @@ public class AuthService
         await Task.CompletedTask;
         return false;
     }
-}
-
-// ILoggerの模擬実装 (実際はMicrosoft.Extensions.Loggingを使用)
-file class ILogger<T>
-{
-    public void LogInformation(string message, params object[] args) { }
-    public void LogWarning(string message, params object[] args) { }
-    public void LogError(Exception ex, string message, params object[] args) { }
 }

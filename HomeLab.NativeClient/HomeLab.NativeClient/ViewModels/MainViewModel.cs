@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HomeLab.NativeClient.Services;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace HomeLab.NativeClient.ViewModels;
 
@@ -20,12 +21,22 @@ public partial class MainViewModel : ViewModelBase
     public MainViewModel(AuthService authService)
     {
         _authService = authService;
-        UpdateGreeting();
+        // 初期表示はログイン画面
+        CurrentView = new LoginViewModel(authService);
     }
 
     partial void OnIsLoggedInChanged(bool value)
     {
         UpdateGreeting();
+    }
+
+    partial void OnCurrentViewChanged(ViewModelBase value)
+    {
+        // ログイン成功時の検知
+        if (value is DashboardViewModel && !IsLoggedIn)
+        {
+            IsLoggedIn = true;
+        }
     }
 
     private void UpdateGreeting()
@@ -36,9 +47,17 @@ public partial class MainViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private void NavigateDashboard()
+    {
+        CurrentView = new DashboardViewModel(
+            App.Services!.GetRequiredService<ApiService>());
+    }
+
+    [RelayCommand]
     private void Logout()
     {
         _authService.Logout();
         IsLoggedIn = false;
+        CurrentView = new LoginViewModel(_authService);
     }
 }

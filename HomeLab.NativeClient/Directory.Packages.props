@@ -18,5 +18,9 @@
         <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.0" />
 
         <PackageVersion Include="Xamarin.AndroidX.Core.SplashScreen" Version="1.0.1.15" />
+
+        <PackageVersion Include="MQTTnet" Version="5.1.0.1559" />
+        <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.0-preview.6.25358.103" />
+        <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.0-preview.6.25358.103" />
     </ItemGroup>
 </Project>

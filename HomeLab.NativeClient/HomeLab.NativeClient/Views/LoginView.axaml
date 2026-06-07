@@ -28,24 +28,24 @@
 
             <!-- Email -->
             <TextBox Text="{Binding Email}"
-                     Watermark="メールアドレス"
+                     PlaceholderText="メールアドレス"
                      IsEnabled="{Binding !IsBusy}"/>
 
             <!-- Password -->
             <TextBox Text="{Binding Password}"
-                     Watermark="パスワード"
+                     PlaceholderText="パスワード"
                      PasswordChar="*"
                      IsEnabled="{Binding !IsBusy}"/>
 
             <!-- DisplayName (登録時のみ) -->
             <TextBox Text="{Binding DisplayName}"
-                     Watermark="表示名"
+                     PlaceholderText="表示名"
                      IsVisible="{Binding !IsLoginMode}"
                      IsEnabled="{Binding !IsBusy}"/>
 
             <!-- TOTP -->
             <TextBox Text="{Binding TotpCode}"
-                     Watermark="認証コード (6桁)"
+                     PlaceholderText="認証コード (6桁)"
                      IsVisible="{Binding ShowTotpField}"
                      MaxLength="6"
                      IsEnabled="{Binding !IsBusy}"/>
