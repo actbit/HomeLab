@@ -21,10 +21,21 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<PasskeyCredential> PasskeyCredentials => Set<PasskeyCredential>();
     public DbSet<LockDevice> LockDevices => Set<LockDevice>();
     public DbSet<LockLog> LockLogs => Set<LockLog>();
+    public DbSet<TemporaryKey> TemporaryKeys => Set<TemporaryKey>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+
+        builder.Entity<TemporaryKey>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.TokenHash).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.Label).HasMaxLength(100).IsRequired();
+            entity.HasIndex(e => e.TokenHash).IsUnique();
+            entity.HasIndex(e => e.DeviceId);
+            entity.HasOne(e => e.Device).WithMany().HasForeignKey(e => e.DeviceId).OnDelete(DeleteBehavior.Cascade);
+        });
 
         // PasskeyCredential 設定
         builder.Entity<PasskeyCredential>(entity =>

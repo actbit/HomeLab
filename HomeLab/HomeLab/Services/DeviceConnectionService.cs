@@ -24,6 +24,7 @@ public class DeviceConnectionService : BackgroundService
     private readonly ILogger<DeviceConnectionService> _logger;
     private readonly IServiceProvider _serviceProvider;
     private readonly IHubContext<LockHub> _hubContext;
+    private readonly IHubContext<TemporaryKeyHub> _temporaryHub;
 
     // デバイスID → WebSocket接続のマッピング
     private readonly ConcurrentDictionary<string, WebSocket> _connections = new();
@@ -37,11 +38,13 @@ public class DeviceConnectionService : BackgroundService
     public DeviceConnectionService(
         ILogger<DeviceConnectionService> logger,
         IServiceProvider serviceProvider,
-        IHubContext<LockHub> hubContext)
+        IHubContext<LockHub> hubContext,
+        IHubContext<TemporaryKeyHub> temporaryHub)
     {
         _logger = logger;
         _serviceProvider = serviceProvider;
         _hubContext = hubContext;
+        _temporaryHub = temporaryHub;
     }
 
     /// <summary>
@@ -147,6 +150,7 @@ public class DeviceConnectionService : BackgroundService
             _knownLockStates.TryRemove(connectionKey, out _);
             await _hubContext.Clients.Group($"tenant:{device.UserId}")
                 .SendAsync(LockHubEvents.DeviceStatusChanged, connectionKey);
+            await NotifyTemporaryKeysAsync(device.Id);
         }
         finally { connectionGate.Release(); }
 
@@ -220,6 +224,7 @@ public class DeviceConnectionService : BackgroundService
                         await offDb.SaveChangesAsync();
                         await _hubContext.Clients.Group($"tenant:{device.UserId}")
                             .SendAsync(LockHubEvents.DeviceStatusChanged, connectionKey);
+                        await NotifyTemporaryKeysAsync(device.Id);
                     }
                 }
             }
@@ -318,6 +323,7 @@ public class DeviceConnectionService : BackgroundService
             // SignalRでブラウザに通知
             await _hubContext.Clients.Group($"tenant:{userId}")
                 .SendAsync(LockHubEvents.LockStateChanged, deviceId);
+            await NotifyTemporaryKeysAsync(Guid.Parse(deviceId));
         }
         catch (Exception ex)
         {
@@ -453,6 +459,7 @@ public class DeviceConnectionService : BackgroundService
                 {
                     await _hubContext.Clients.Group($"tenant:{log.Device.UserId}")
                         .SendAsync(LockHubEvents.CommandResult, log.DeviceId, log.RequestId, false, CommandTimedOut, stoppingToken);
+                    await NotifyTemporaryKeysAsync(log.DeviceId);
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -460,5 +467,15 @@ public class DeviceConnectionService : BackgroundService
                 _logger.LogError(ex, "Failed to update timed-out device commands");
             }
         }
+    }
+
+    private async Task NotifyTemporaryKeysAsync(Guid deviceId)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var ids = await db.TemporaryKeys.Where(k => k.DeviceId == deviceId && !k.Revoked && k.ExpiresAtUnix > now).Select(k => k.Id).ToListAsync();
+        foreach (var id in ids)
+            await _temporaryHub.Clients.Group($"temporary:{id:N}").SendAsync("Updated");
     }
 }

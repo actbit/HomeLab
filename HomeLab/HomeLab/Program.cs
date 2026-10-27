@@ -162,6 +162,11 @@ public partial class Program
                 db.Database.EnsureCreated();
             }
         }
+        if (!app.Environment.IsEnvironment("Testing"))
+        {
+            using var scope = app.Services.CreateScope();
+            await TemporaryKeySchema.EnsureAsync(scope.ServiceProvider.GetRequiredService<AppDbContext>());
+        }
 
         app.MapDefaultEndpoints();
 
@@ -180,7 +185,7 @@ public partial class Program
         app.UseStaticFiles();
         app.Use(async (context, next) =>
         {
-            if (context.Request.Path == "/reset-password")
+            if (context.Request.Path == "/reset-password" || context.Request.Path == "/temporary-key")
             {
                 context.Response.Headers["Referrer-Policy"] = "no-referrer";
                 context.Response.Headers.CacheControl = "no-store";
@@ -211,6 +216,7 @@ public partial class Program
         app.MapGet("/register", RenderSveltePage).WithOrder(-1000);
         app.MapGet("/forgot-password", RenderSveltePage).WithOrder(-1000);
         app.MapGet("/reset-password", RenderSveltePage).WithOrder(-1000);
+        app.MapGet("/temporary-key", RenderSveltePage).WithOrder(-1000);
         app.MapGet("/devices", RenderSveltePage).WithOrder(-1000);
         app.MapGet("/devices/{id:guid}", RenderSveltePage).WithOrder(-1000);
         app.MapGet("/setup/provision", RenderSveltePage).WithOrder(-1000);
@@ -221,6 +227,7 @@ public partial class Program
 
         // SignalR Hub
         app.MapHub<LockHub>("/hubs/lock").RequireAuthorization();
+        app.MapHub<TemporaryKeyHub>("/hubs/temporary-key").RequireRateLimiting("authentication");
 
         // ESP32 WebSocket エンドポイント
         app.MapDeviceWebSocket();
@@ -229,6 +236,7 @@ public partial class Program
         app.MapAuthEndpoints();
         app.MapDeviceEndpoints();
         app.MapLockEndpoints();
+        app.MapTemporaryKeyEndpoints();
 
         app.Run();
     }

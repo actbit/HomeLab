@@ -28,6 +28,8 @@
     publicKey?: string;
   };
   type Passkey = { id: string; name: string | null; authenticatorType: string; createdAt: string; lastUsedAt: string | null };
+  type TemporaryKey = { id: string; label: string; remainingUses: number; expiresAtUnix: number; revoked: boolean; registered: boolean };
+  type GuestKey = { label: string; deviceName: string; remainingUses: number; expiresAtUnix: number; registered: boolean; online: boolean; isLocked: boolean | null; lastResult: string | null };
 
   let { model }: { model: SveltePage } = $props();
   let authenticated = $state(model.isAuthenticated);
@@ -75,12 +77,21 @@
   let forecasts = $state<{ date: string; temperature: number; summary: string }[]>([]);
   let notificationPermission = $state('default');
   let realtimeStatus = $state('connecting');
+  let temporaryKeys = $state<TemporaryKey[]>([]);
+  let keyLabel = $state('');
+  let keyUses = $state(1);
+  let keyHours = $state(24);
+  let shareLink = $state('');
+  let guestToken = $state('');
+  let guestKey = $state<GuestKey | null>(null);
+  let keyBusy = $state(false);
 
   const page = () => {
     if (path === '/login') return 'login';
     if (path === '/register') return 'register';
     if (path === '/forgot-password') return 'forgot-password';
     if (path === '/reset-password') return 'reset-password';
+    if (path === '/temporary-key') return 'temporary-key';
     if (path === '/setup/provision') return 'provision';
     if (path === '/settings/totp') return 'totp';
     if (path === '/settings/passkeys') return 'passkeys';
@@ -106,6 +117,12 @@
 
   function actionLabel(action: string | number) {
     return typeof action === 'number' ? (['施錠', '解錠', 'トグル', '状態確認'][action] ?? '不明') : action;
+  }
+
+  function logSource(log: LogEntry) {
+    if (!log.triggeredBy?.startsWith('Key:')) return '';
+    const key = temporaryKeys.find(item => item.id.replaceAll('-', '').startsWith(log.triggeredBy!.slice(4)));
+    return ` · 一時キー: ${key?.label ?? '不明'}`;
   }
 
   async function enableNotifications() {
@@ -170,11 +187,88 @@
       if (!deviceResponse.ok) throw new Error(await readError(deviceResponse, 'デバイスを取得できませんでした'));
       selectedDevice = await deviceResponse.json();
       logs = logsResponse.ok ? await logsResponse.json() : [];
+      const keysResponse = await fetch(`/api/devices/${id}/temporary-keys`, { credentials: 'include' });
+      temporaryKeys = keysResponse.ok ? await keysResponse.json() : [];
     } catch (error) {
       setError(error instanceof Error ? error.message : 'デバイス詳細の取得に失敗しました');
     } finally {
       isLoading = false;
     }
+  }
+
+  async function createTemporaryKey(event: SubmitEvent) {
+    event.preventDefault();
+    if (!selectedDevice) return;
+    keyBusy = true;
+    try {
+      const response = await fetch(`/api/devices/${selectedDevice.id}/temporary-keys`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: keyLabel, uses: Number(keyUses), validHours: Number(keyHours) })
+      });
+      if (!response.ok) throw new Error(await readError(response, '一時キーを作成できませんでした'));
+      const result = await response.json();
+      shareLink = `${window.location.origin}/temporary-key#${result.token}`;
+      keyLabel = '';
+      await loadDevice(selectedDevice.id);
+      setSuccess('一時キーを作成しました。リンクはこの画面に表示されている間に共有してください。');
+    } catch (error) { setError(error instanceof Error ? error.message : '一時キーを作成できませんでした'); }
+    finally { keyBusy = false; }
+  }
+
+  async function revokeTemporaryKey(key: TemporaryKey) {
+    if (!selectedDevice || !window.confirm(`「${key.label}」を無効にしますか？`)) return;
+    keyBusy = true;
+    try {
+      const response = await fetch(`/api/devices/${selectedDevice.id}/temporary-keys/${key.id}`, { method: 'DELETE', credentials: 'include' });
+      if (!response.ok) throw new Error('一時キーを無効にできませんでした');
+      await loadDevice(selectedDevice.id);
+      setSuccess('一時キーを無効にしました');
+    } catch (error) { setError(error instanceof Error ? error.message : '一時キーを無効にできませんでした'); }
+    finally { keyBusy = false; }
+  }
+
+  async function loadGuestKey() {
+    if (!guestToken) { setError('共有リンクを開いてください。'); return; }
+    try {
+      const response = await fetch('/api/temporary-keys/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: guestToken }) });
+      if (!response.ok) throw new Error(await readError(response, '一時キーが無効か期限切れです。'));
+      guestKey = await response.json();
+    } catch (error) { guestKey = null; setError(error instanceof Error ? error.message : '一時キーを取得できませんでした'); }
+  }
+
+  async function useGuestKey(action: 'register' | 'unlock') {
+    keyBusy = true;
+    try {
+      await (window as any).passkeyAuth.temporary(guestToken, action);
+      if (action === 'register') {
+        localStorage.setItem('homelab.temporaryKey', guestToken);
+        setSuccess('パスキーを登録しました。この端末で一時キーを利用できます。');
+      } else setSuccess('解錠要求を送信しました。デバイスからの結果を待っています。');
+      await loadGuestKey();
+    } catch (error) { setError(error instanceof Error ? error.message : '一時キーを利用できませんでした'); await loadGuestKey(); }
+    finally { keyBusy = false; }
+  }
+
+  async function startGuestSignalR() {
+    const signalR = (window as any).signalR;
+    if (!signalR || !guestToken) return;
+    const connection = new signalR.HubConnectionBuilder().withUrl('/hubs/temporary-key').withAutomaticReconnect().build();
+    connection.on('Updated', loadGuestKey);
+    connection.onreconnected(async () => { try { await connection.invoke('Join', guestToken); await loadGuestKey(); } catch { await loadGuestKey(); } });
+    let disposed = false;
+    let retryTimer: number | undefined;
+    const connect = async () => {
+      if (disposed) return;
+      try { await connection.start(); await connection.invoke('Join', guestToken); await loadGuestKey(); }
+      catch {
+        await loadGuestKey();
+        if (connection.state !== signalR.HubConnectionState.Disconnected) await connection.stop();
+        if (!disposed && guestKey) { if (retryTimer !== undefined) clearTimeout(retryTimer); retryTimer = window.setTimeout(connect, 5000); }
+      }
+    };
+    connection.onclose(() => { if (!disposed && guestKey) retryTimer = window.setTimeout(connect, 5000); });
+    window.addEventListener('pagehide', () => { disposed = true; if (retryTimer !== undefined) clearTimeout(retryTimer); void connection.stop(); }, { once: true });
+    await connect();
   }
 
   async function operate(deviceId: string, action: 'lock' | 'unlock' | 'toggle') {
@@ -520,6 +614,15 @@
   onMount(async () => {
     if ('Notification' in window) notificationPermission = Notification.permission;
     passkeySupported = Boolean((window as any).passkeyAuth?.isSupported());
+    if (page() === 'temporary-key') {
+      const incoming = window.location.hash.slice(1);
+      if (incoming) sessionStorage.setItem('homelab.pendingTemporaryKey', incoming);
+      guestToken = incoming || sessionStorage.getItem('homelab.pendingTemporaryKey') || localStorage.getItem('homelab.temporaryKey') || '';
+      window.history.replaceState(null, '', '/temporary-key');
+      await loadGuestKey();
+      if (guestKey) await startGuestSignalR();
+      return;
+    }
     if (page() === 'reset-password') {
       const params = new URLSearchParams(window.location.hash.slice(1));
       resetEmail = params.get('email') || '';
@@ -563,6 +666,20 @@
   <main class="content"><section class="panel"><h1>Counter</h1><p role="status">Current count: {counter}</p><button class="primary" onclick={() => counter++}>Click me</button></section></main>
 {:else if page() === 'weather'}
   <main class="content"><section class="panel"><h1>Weather</h1><p>Sample forecast data</p>{#if forecasts.length}<table><thead><tr><th>Date</th><th>Temp. (C)</th><th>Temp. (F)</th><th>Summary</th></tr></thead><tbody>{#each forecasts as forecast}<tr><td>{forecast.date}</td><td>{forecast.temperature}</td><td>{32 + Math.trunc(forecast.temperature / 0.5556)}</td><td>{forecast.summary}</td></tr>{/each}</tbody></table>{:else}<p>Loading...</p>{/if}</section></main>
+{:else if page() === 'temporary-key'}
+  <main class="auth-shell"><section class="auth-card"><div class="brand">🏠 HomeLab</div><h1>一時キー</h1>
+    {#if errorMessage}<div class="alert error">{errorMessage}</div>{/if}{#if successMessage}<div class="alert success">{successMessage}</div>{/if}
+    {#if guestKey}
+      <h2>{guestKey.deviceName}</h2><p>{guestKey.label} · 残り {guestKey.remainingUses} 回</p>
+      <p class="muted">有効期限 {new Date(guestKey.expiresAtUnix * 1000).toLocaleString('ja-JP')}</p>
+      <p>{guestKey.online ? lockLabel(guestKey.isLocked) : 'オフライン'}</p>
+      {#if guestKey.lastResult}<p>前回の操作: {guestKey.lastResult === 'pending' ? '確認中' : guestKey.lastResult === 'success' ? '成功' : '失敗'}</p>{/if}
+      {#if !passkeySupported}<p class="alert error">パスキーにはHTTPSと対応ブラウザが必要です。</p>
+      {:else if !guestKey.registered}<button class="primary" disabled={keyBusy || guestKey.remainingUses <= 0} onclick={() => useGuestKey('register')}>パスキーを登録</button>
+      {:else}<button class="success-button" disabled={keyBusy || guestKey.remainingUses <= 0 || !guestKey.online} onclick={() => useGuestKey('unlock')}>パスキーで解錠</button>{/if}
+      <p class="muted">解錠要求の送信時に1回消費します。結果を確認できない場合も回数は戻りません。</p>
+    {/if}
+  </section></main>
 {:else if !authenticated && page() === 'login'}
   <main class="auth-shell">
     <section class="auth-card">
@@ -703,7 +820,12 @@
             </div>
             <dl><div><dt>バッテリー</dt><dd>{selectedDevice.batteryLevel ?? '-'}{selectedDevice.batteryLevel == null ? '' : '%'}</dd></div><div><dt>Wi‑Fi</dt><dd>{selectedDevice.wifiRssi ?? '-'}{selectedDevice.wifiRssi == null ? '' : ' dBm'}</dd></div><div><dt>最終通信</dt><dd>{selectedDevice.lastSeenAt ? new Date(selectedDevice.lastSeenAt).toLocaleString('ja-JP') : '未接続'}</dd></div></dl>
           </article>
-          <article class="panel"><div class="panel-heading"><h2>操作履歴</h2><a href={path}>更新</a></div>{#if logs.length}<div class="log-list">{#each logs as log}<div class:failed={!log.success && log.errorMessage !== 'Pending'} class="log-row"><span>{new Date(log.timestamp).toLocaleString('ja-JP')}</span><strong>{actionLabel(log.actionType)}</strong><span>{log.errorMessage === 'Pending' ? '確認中' : log.errorMessage === 'Timed out' ? 'タイムアウト' : log.success ? '成功' : '失敗'}</span></div>{/each}</div>{:else}<p class="muted">操作履歴がありません。</p>{/if}</article>
+          <article class="panel"><div class="panel-heading"><h2>操作履歴</h2><a href={path}>更新</a></div>{#if logs.length}<div class="log-list">{#each logs as log}<div class:failed={!log.success && log.errorMessage !== 'Pending'} class="log-row"><span>{new Date(log.timestamp).toLocaleString('ja-JP')}</span><strong>{actionLabel(log.actionType)}{logSource(log)}</strong><span>{log.errorMessage === 'Pending' ? '確認中' : log.errorMessage === 'Timed out' ? 'タイムアウト' : log.success ? '成功' : '失敗'}</span></div>{/each}</div>{:else}<p class="muted">操作履歴がありません。</p>{/if}</article>
+          <article class="panel"><h2>一時キーを共有</h2><p class="muted">リンクを受け取った人がパスキーを登録し、指定回数だけ解錠できます。</p>
+            <form onsubmit={createTemporaryKey}><label>キーの名前<input bind:value={keyLabel} maxlength="100" required placeholder="例: 来客用" /></label><label>解錠できる回数<input type="number" min="1" max="1000" bind:value={keyUses} required /></label><label>有効時間（時間）<input type="number" min="1" max="720" bind:value={keyHours} required /></label><button class="primary" disabled={keyBusy}>一時キーを作成</button></form>
+            {#if shareLink}<label>共有リンク（作成直後のみ表示）<input value={shareLink} readonly onclick={(event) => (event.currentTarget as HTMLInputElement).select()} /></label><button class="secondary" onclick={() => navigator.clipboard.writeText(shareLink)}>リンクをコピー</button>{/if}
+            {#if temporaryKeys.length}<div class="log-list">{#each temporaryKeys as key}<div class="device-row"><div class="device-main"><h2>{key.label}</h2><p>{key.revoked ? '無効' : key.expiresAtUnix * 1000 <= Date.now() ? '期限切れ' : `残り ${key.remainingUses} 回`} · {key.registered ? 'パスキー登録済み' : '未登録'} · {new Date(key.expiresAtUnix * 1000).toLocaleString('ja-JP')}まで</p></div>{#if !key.revoked}<button class="danger-button" disabled={keyBusy} onclick={() => revokeTemporaryKey(key)}>無効化</button>{/if}</div>{/each}</div>{/if}
+          </article>
         </section>
       {:else if page() === 'devices'}
         <div class="page-heading"><div><p class="eyebrow">管理</p><h1>デバイス</h1></div><a class="button primary" href="/setup/provision">＋ デバイス追加</a></div>
