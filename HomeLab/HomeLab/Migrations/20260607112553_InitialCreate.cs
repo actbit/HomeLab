@@ -11,6 +11,8 @@ namespace HomeLab.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            if (!ActiveProvider.Contains("Sqlite", StringComparison.Ordinal))
+                throw new NotSupportedException("The initial migration targets SQLite; do not apply it to PostgreSQL.");
             migrationBuilder.CreateTable(
                 name: "AspNetRoles",
                 columns: table => new

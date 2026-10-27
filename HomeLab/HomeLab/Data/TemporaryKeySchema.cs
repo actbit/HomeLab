@@ -6,6 +6,24 @@ namespace HomeLab.Server.Data;
 // supports installations created before temporary keys existed.
 public static class TemporaryKeySchema
 {
+    public const string SqliteTable = """
+        CREATE TABLE IF NOT EXISTS "TemporaryKeys" (
+            "Id" TEXT NOT NULL PRIMARY KEY,
+            "DeviceId" TEXT NOT NULL,
+            "TokenHash" varchar(64) NOT NULL,
+            "Label" varchar(100) NOT NULL,
+            "ExpiresAtUnix" bigint NOT NULL,
+            "RemainingUses" integer NOT NULL,
+            "Revoked" INTEGER NOT NULL,
+            "CredentialId" TEXT NULL,
+            "PublicKey" TEXT NULL,
+            "SignatureCounter" bigint NOT NULL,
+            "LastRequestId" TEXT NULL,
+            FOREIGN KEY ("DeviceId") REFERENCES "LockDevices" ("Id") ON DELETE CASCADE
+        )
+        """;
+    public const string TokenIndex = "CREATE UNIQUE INDEX IF NOT EXISTS \"IX_TemporaryKeys_TokenHash\" ON \"TemporaryKeys\" (\"TokenHash\")";
+    public const string DeviceIndex = "CREATE INDEX IF NOT EXISTS \"IX_TemporaryKeys_DeviceId\" ON \"TemporaryKeys\" (\"DeviceId\")";
     public static async Task EnsureAsync(AppDbContext db)
     {
         if (!db.Database.IsRelational()) return;

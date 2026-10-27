@@ -254,6 +254,56 @@ namespace HomeLab.Migrations
                     b.ToTable("PasskeyCredentials");
                 });
 
+            modelBuilder.Entity("HomeLab.Server.Models.Entities.TemporaryKey", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CredentialId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("ExpiresAtUnix")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastRequestId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PublicKey")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("RemainingUses")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Revoked")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("SignatureCounter")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DeviceId");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("TemporaryKeys");
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>
                 {
                     b.Property<string>("Id")
@@ -413,6 +463,17 @@ namespace HomeLab.Migrations
                         .IsRequired();
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("HomeLab.Server.Models.Entities.TemporaryKey", b =>
+                {
+                    b.HasOne("HomeLab.Server.Models.Entities.LockDevice", "Device")
+                        .WithMany()
+                        .HasForeignKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Device");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>

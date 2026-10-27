@@ -14,6 +14,7 @@ using SvelteSharp.AspNetCore;
 using SvelteSharp.Jint;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
 using Finbuckle.MultiTenant.Extensions;
 using Finbuckle.MultiTenant.AspNetCore.Extensions;
 using System.Threading.RateLimiting;
@@ -153,19 +154,19 @@ public partial class Program
 
         var app = builder.Build();
 
-        // データベースマイグレーション (開発環境)
-        if (app.Environment.IsDevelopment())
-        {
-            using (var scope = app.Services.CreateScope())
-            {
-                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                db.Database.EnsureCreated();
-            }
-        }
+        // SQLite has EF migrations; existing EnsureCreated databases are checked before adoption.
         if (!app.Environment.IsEnvironment("Testing"))
         {
             using var scope = app.Services.CreateScope();
-            await TemporaryKeySchema.EnsureAsync(scope.ServiceProvider.GetRequiredService<AppDbContext>());
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            if (db.Database.IsSqlite()) await SqliteMigrationInitializer.InitializeAsync(db);
+            else if (db.Database.IsNpgsql())
+            {
+                // The checked-in initial EF migration is SQLite-specific.
+                await db.Database.EnsureCreatedAsync();
+                await TemporaryKeySchema.EnsureAsync(db);
+            }
+            else throw new InvalidOperationException("Unsupported database provider.");
         }
 
         app.MapDefaultEndpoints();
