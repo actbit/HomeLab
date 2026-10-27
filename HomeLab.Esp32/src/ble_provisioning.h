@@ -10,7 +10,7 @@
  * BLE プロビジョニングサーバー
  * 初回設定時にWeb BLEから接続して設定を受け取る
  */
-class BleProvisioning {
+class BleProvisioning : public NimBLECharacteristicCallbacks {
 public:
     /**
      * BLE provisioning サーバーを開始
@@ -21,6 +21,11 @@ public:
         _configured = false;
 
         NimBLEDevice::init("HomeLock-ESP32");
+        const uint32_t pairingCode = esp_random() % 1000000;
+        NimBLEDevice::setSecurityAuth(true, true, true);
+        NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
+        NimBLEDevice::setSecurityPasskey(pairingCode);
+        Serial.printf("[BLE] Pairing code: %06lu\n", static_cast<unsigned long>(pairingCode));
         NimBLEServer* server = NimBLEDevice::createServer();
 
         NimBLEService* service = server->createService(Config::BLE_SERVICE_UUID);
@@ -28,60 +33,67 @@ public:
         // Device ID (Read)
         _deviceIdChar = service->createCharacteristic(
             "0000fe41-8e22-4541-9d4c-21edae82e5a1",
-            NIMBLE_PROPERTY::READ
+            NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::READ_AUTHEN
         );
 
         // Device Public Key (Read)
         _publicKeyChar = service->createCharacteristic(
             "0000fe42-8e22-4541-9d4c-21edae82e5a1",
-            NIMBLE_PROPERTY::READ
+            NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::READ_AUTHEN
         );
 
         // WiFi SSID (Write)
         _ssidChar = service->createCharacteristic(
             "0000fe43-8e22-4541-9d4c-21edae82e5a1",
-            NIMBLE_PROPERTY::WRITE
+            NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_AUTHEN
         );
         _ssidChar->setCallbacks(this);
 
         // WiFi Password (Write)
         _wifiPassChar = service->createCharacteristic(
             "0000fe44-8e22-4541-9d4c-21edae82e5a1",
-            NIMBLE_PROPERTY::WRITE
+            NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_AUTHEN
         );
         _wifiPassChar->setCallbacks(this);
 
         // SESAME UUID (Write)
         _sesameUuidChar = service->createCharacteristic(
             "0000fe45-8e22-4541-9d4c-21edae82e5a1",
-            NIMBLE_PROPERTY::WRITE
+            NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_AUTHEN
         );
         _sesameUuidChar->setCallbacks(this);
 
         // SESAME API Key (Write)
         _sesameKeyChar = service->createCharacteristic(
             "0000fe46-8e22-4541-9d4c-21edae82e5a1",
-            NIMBLE_PROPERTY::WRITE
+            NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_AUTHEN
         );
         _sesameKeyChar->setCallbacks(this);
 
         // Activation Key (Write)
         _activationKeyChar = service->createCharacteristic(
             "0000fe47-8e22-4541-9d4c-21edae82e5a1",
-            NIMBLE_PROPERTY::WRITE
+            NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_AUTHEN
         );
         _activationKeyChar->setCallbacks(this);
 
-        // MQTT Broker URL (Write)
-        _mqttUrlChar = service->createCharacteristic(
+        // WebSocket Server URL (Write) - ws://host:port
+        _serverUrlChar = service->createCharacteristic(
             "0000fe48-8e22-4541-9d4c-21edae82e5a1",
-            NIMBLE_PROPERTY::WRITE
+            NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_AUTHEN
+        );
+        _serverUrlChar->setCallbacks(this);
+
+        // MQTT Broker URL (Write) - 非推奨: serverUrlを使用
+        _mqttUrlChar = service->createCharacteristic(
+            "0000fe49-8e22-4541-9d4c-21edae82e5a1",
+            NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_AUTHEN
         );
         _mqttUrlChar->setCallbacks(this);
 
         // Status (Notify)
         _statusChar = service->createCharacteristic(
-            "0000fe49-8e22-4541-9d4c-21edae82e5a1",
+            "0000fe4a-8e22-4541-9d4c-21edae82e5a1",
             NIMBLE_PROPERTY::NOTIFY
         );
 
@@ -94,7 +106,7 @@ public:
         // 広告開始
         NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
         advertising->addServiceUUID(Config::BLE_SERVICE_UUID);
-        advertising->setScanResponse(true);
+        advertising->enableScanResponse(true);
         NimBLEDevice::startAdvertising();
 
         Serial.println("[BLE] Provisioning server started, waiting for connection...");
@@ -115,11 +127,13 @@ public:
     }
 
     // NimBLECharacteristicCallbacks
-    void onWrite(NimBLECharacteristic* pCharacteristic) override {
-        String uuid = pCharacteristic->getUUID().toString();
-        String value = pCharacteristic->getValue();
+    void onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& /*connInfo*/) override {
+        const std::string uuidValue = pCharacteristic->getUUID().toString();
+        const std::string valueValue = pCharacteristic->getValue();
+        String uuid(uuidValue.c_str());
+        String value(valueValue.c_str());
 
-        Serial.printf("[BLE] Write to %s: %s\n", uuid.c_str(), value.c_str());
+        Serial.printf("[BLE] Received characteristic %s\n", uuid.c_str());
 
         if (uuid == "0000fe43-8e22-4541-9d4c-21edae82e5a1") {
             _config->wifiSsid = value;
@@ -132,8 +146,11 @@ public:
         } else if (uuid == "0000fe47-8e22-4541-9d4c-21edae82e5a1") {
             _config->activationKey = value;
         } else if (uuid == "0000fe48-8e22-4541-9d4c-21edae82e5a1") {
-            _config->mqttBrokerUrl = value;
-            // MQTT URLが書き込まれたら全設定完了とみなす
+            // WebSocket Server URL - 最後の設定項目
+            _config->serverUrl = value;
+            _config->mqttBrokerUrl = value;  // 互換性
+
+            // 全設定完了とみなす
             _config->configured = true;
             _configured = true;
             Config::save(*_config);
@@ -143,6 +160,9 @@ public:
             _statusChar->notify();
 
             Serial.println("[BLE] All settings received, configuration complete!");
+        } else if (uuid == "0000fe49-8e22-4541-9d4c-21edae82e5a1") {
+            // 非推奨: serverUrlを使用
+            _config->mqttBrokerUrl = value;
         }
     }
 
@@ -157,6 +177,7 @@ private:
     NimBLECharacteristic* _sesameUuidChar;
     NimBLECharacteristic* _sesameKeyChar;
     NimBLECharacteristic* _activationKeyChar;
+    NimBLECharacteristic* _serverUrlChar;
     NimBLECharacteristic* _mqttUrlChar;
     NimBLECharacteristic* _statusChar;
 };

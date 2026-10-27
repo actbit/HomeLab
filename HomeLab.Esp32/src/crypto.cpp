@@ -104,24 +104,20 @@ bool sign(const uint8_t* message, size_t messageLen,
     mbedtls_ecdsa_context ctx;
     mbedtls_ecdsa_init(&ctx);
 
-    int ret = mbedtls_ecdsa_from_keypair(&ctx,
-                                          MBEDTLS_ECP_DP_SECP256R1,
-                                          nullptr, // Q (署名に不要)
-                                          privateKey);
+    // 保存済みの秘密鍵から署名用コンテキストを構築する。
+    // mbedTLS 3.x の mbedtls_ecdsa_from_keypair は鍵ペアポインタを受け取るため、
+    // グループと d を直接読み込む。
+    int ret = mbedtls_ecp_group_load(&ctx.grp, MBEDTLS_ECP_DP_SECP256R1);
     if (ret != 0) {
-        // グループ設定 + 秘密鍵読み込み
-        ret = mbedtls_ecp_group_load(&ctx.grp, MBEDTLS_ECP_DP_SECP256R1);
-        if (ret != 0) {
-            Serial.printf("[CRYPTO] Group load failed: -0x%04x\n", -ret);
-            mbedtls_ecdsa_free(&ctx);
-            return false;
-        }
-        ret = mbedtls_mpi_read_binary(&ctx.d, privateKey, 32);
-        if (ret != 0) {
-            Serial.printf("[CRYPTO] Private key load failed: -0x%04x\n", -ret);
-            mbedtls_ecdsa_free(&ctx);
-            return false;
-        }
+        Serial.printf("[CRYPTO] Group load failed: -0x%04x\n", -ret);
+        mbedtls_ecdsa_free(&ctx);
+        return false;
+    }
+    ret = mbedtls_mpi_read_binary(&ctx.d, privateKey, 32);
+    if (ret != 0) {
+        Serial.printf("[CRYPTO] Private key load failed: -0x%04x\n", -ret);
+        mbedtls_ecdsa_free(&ctx);
+        return false;
     }
 
     // 署名生成
@@ -168,7 +164,7 @@ String generateDeviceId() {
     uint8_t rnd[4];
     esp_fill_random(rnd, 4);
 
-    char id[21]; // "hl-" + 12 hex (mac) + "-" + 8 hex (rnd) + null
+    char id[25]; // "hl-" + 12 hex (mac) + "-" + 8 hex (rnd) + null
     snprintf(id, sizeof(id), "hl-%02x%02x%02x%02x%02x%02x-%02x%02x%02x%02x",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
              rnd[0], rnd[1], rnd[2], rnd[3]);
@@ -188,12 +184,17 @@ String publicKeyToBase64(const uint8_t* publicKey) {
     size_t outLen = 0;
     mbedtls_base64_encode(nullptr, 0, &outLen, uncompressed, 65);
 
-    String result;
-    result.reserve(outLen);
-    result.resize(outLen - 1); // null終端分除外
+    char* encoded = new char[outLen];
+    size_t encodedLen = 0;
+    int ret = mbedtls_base64_encode((unsigned char*)encoded,
+                                    outLen, &encodedLen, uncompressed, 65);
+    if (ret != 0) {
+        delete[] encoded;
+        return String();
+    }
 
-    mbedtls_base64_encode((unsigned char*)result.begin(),
-                          outLen, &outLen, uncompressed, 65);
+    String result(encoded);
+    delete[] encoded;
 
     return result;
 }

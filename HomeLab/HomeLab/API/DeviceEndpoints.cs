@@ -22,6 +22,7 @@ public static class DeviceEndpoints
         // ===== デバイス一覧取得 =====
         group.MapGet("/", async (
             AppDbContext dbContext,
+            DeviceConnectionService connections,
             HttpContext httpContext) =>
         {
             var userId = httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -32,22 +33,19 @@ public static class DeviceEndpoints
 
             var devices = await dbContext.LockDevices
                 .Where(d => d.UserId == userId)
-                .Select(d => new DeviceListItem(
-                    d.Id,
-                    d.Name,
-                    Enum.Parse<Shared.Enums.DeviceStatus>(d.Status),
-                    d.IsLocked,
-                    d.LastSeenAt))
                 .OrderBy(d => d.Name)
                 .ToListAsync();
 
-            return Results.Ok(devices);
+            return Results.Ok(devices.Select(d => new DeviceListItem(
+                d.Id, d.Name, Enum.Parse<Shared.Enums.DeviceStatus>(d.Status),
+                connections.GetKnownLockState(d.Id), d.LastSeenAt, d.BatteryLevel, d.WifiRssi)));
         });
 
         // ===== デバイス詳細取得 =====
         group.MapGet("/{id:guid}", async (
             Guid id,
             AppDbContext dbContext,
+            DeviceConnectionService connections,
             HttpContext httpContext) =>
         {
             var userId = httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -68,10 +66,12 @@ public static class DeviceEndpoints
                 device.Id,
                 device.Name,
                 Enum.Parse<Shared.Enums.DeviceStatus>(device.Status),
-                device.IsLocked,
+                connections.GetKnownLockState(device.Id),
                 device.SesameDeviceUuid,
                 device.LastSeenAt,
-                device.CreatedAt));
+                device.CreatedAt,
+                device.BatteryLevel,
+                device.WifiRssi));
         });
 
         // ===== デバイス登録 (プロビジョニング時) =====
@@ -106,8 +106,9 @@ public static class DeviceEndpoints
                 DevicePublicKey = request.DevicePublicKey,
                 DeviceIdentifier = request.DeviceId,
                 SesameDeviceUuid = request.SesameDeviceUuid,
-                SesameApiKey = request.SesameApiKey,
-                ActivationKey = activationKey,
+                // SESAME鍵はBLEでESP32へ送るため、サーバーに保存する必要はない。
+                SesameApiKey = null,
+                ActivationKey = DeviceConnectionService.HashActivationKey(activationKey),
                 Status = "Offline",
                 IsLocked = true,
                 CreatedAt = DateTimeOffset.UtcNow,
@@ -116,12 +117,19 @@ public static class DeviceEndpoints
             dbContext.LockDevices.Add(device);
             await dbContext.SaveChangesAsync();
 
-            var mqttBrokerUrl = httpContext.Request.Host.ToString();
+            // ESP32がそのままWebSocketへ接続できる完全なURLを返す。
+            // 旧実装はホスト名だけを返していたため、ESP32側のURL解析に失敗していた。
+            var requestScheme = httpContext.Request.Headers["X-Forwarded-Proto"].FirstOrDefault()
+                ?? httpContext.Request.Scheme;
+            var websocketScheme = requestScheme.Equals("https", StringComparison.OrdinalIgnoreCase)
+                ? "wss"
+                : "ws";
+            var serverUrl = $"{websocketScheme}://{httpContext.Request.Host}/ws/device";
 
             return Results.Ok(new DeviceRegisterResponse(
                 device.Id,
                 activationKey,
-                mqttBrokerUrl));
+                serverUrl));
         });
 
         // ===== デバイス削除 =====
@@ -172,8 +180,13 @@ public static class DeviceEndpoints
                 return Results.NotFound();
             }
 
+            if (page < 1 || pageSize is < 1 or > 100)
+                return Results.BadRequest(new { error = "Invalid pagination" });
+
             var logs = await dbContext.LockLogs
                 .Where(l => l.DeviceId == id)
+                .ToListAsync();
+            var result = logs
                 .OrderByDescending(l => l.Timestamp)
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
@@ -185,9 +198,9 @@ public static class DeviceEndpoints
                     l.Success,
                     l.ErrorMessage,
                     l.Timestamp))
-                .ToListAsync();
+                .ToList();
 
-            return Results.Ok(logs);
+            return Results.Ok(result);
         });
 
         return app;

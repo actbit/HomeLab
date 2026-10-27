@@ -9,8 +9,10 @@ public record DeviceListItem(
     Guid Id,
     string Name,
     DeviceStatus Status,
-    bool IsLocked,
-    DateTimeOffset? LastSeenAt
+    bool? IsLocked,
+    DateTimeOffset? LastSeenAt,
+    int? BatteryLevel,
+    int? WifiRssi
 );
 
 /// <summary>
@@ -20,10 +22,12 @@ public record DeviceDetail(
     Guid Id,
     string Name,
     DeviceStatus Status,
-    bool IsLocked,
+    bool? IsLocked,
     string? SesameDeviceUuid,
     DateTimeOffset? LastSeenAt,
-    DateTimeOffset CreatedAt
+    DateTimeOffset CreatedAt,
+    int? BatteryLevel,
+    int? WifiRssi
 );
 
 /// <summary>
@@ -43,8 +47,12 @@ public record DeviceRegisterRequest(
 public record DeviceRegisterResponse(
     Guid DeviceId,
     string ActivationKey,
-    string MqttBrokerUrl
-);
+    string ServerUrl
+)
+{
+    // 既存クライアントとの互換性を維持するための別名。
+    public string MqttBrokerUrl => ServerUrl;
+};
 
 /// <summary>
 /// ロック操作リクエスト

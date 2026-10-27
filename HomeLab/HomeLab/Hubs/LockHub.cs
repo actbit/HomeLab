@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.SignalR;
+using System.Security.Claims;
 
 namespace HomeLab.Server.Hubs;
 
@@ -20,6 +21,8 @@ public class LockHub : Hub
     /// </summary>
     public async Task JoinTenant(string tenantId)
     {
+        if (Context.User?.FindFirstValue(ClaimTypes.NameIdentifier) != tenantId)
+            throw new HubException("Cannot join another user's group.");
         await Groups.AddToGroupAsync(Context.ConnectionId, $"tenant:{tenantId}");
         _logger.LogDebug("Client {ConnectionId} joined tenant group {TenantId}",
             Context.ConnectionId, tenantId);
@@ -30,11 +33,26 @@ public class LockHub : Hub
     /// </summary>
     public async Task LeaveTenant(string tenantId)
     {
+        if (Context.User?.FindFirstValue(ClaimTypes.NameIdentifier) != tenantId)
+            throw new HubException("Cannot leave another user's group.");
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"tenant:{tenantId}");
+    }
+
+    /// <summary>
+    /// ブラウザからユーザーIDを送らせず、Cookieの認証クレームから参加先を決める。
+    /// </summary>
+    public async Task JoinCurrentTenant()
+    {
+        var tenantId = Context.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!string.IsNullOrWhiteSpace(tenantId))
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"tenant:{tenantId}");
+        }
     }
 
     public override async Task OnConnectedAsync()
     {
+        await JoinCurrentTenant();
         _logger.LogDebug("LockHub client connected: {ConnectionId}", Context.ConnectionId);
         await base.OnConnectedAsync();
     }

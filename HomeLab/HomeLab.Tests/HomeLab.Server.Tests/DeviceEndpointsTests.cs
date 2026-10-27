@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using HomeLab.Shared.DTOs;
+using HomeLab.Server.Data;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace HomeLab.Server.Tests;
 
@@ -54,6 +56,12 @@ public class DeviceEndpointsTests
         Assert.NotNull(result);
         Assert.NotEqual(Guid.Empty, result.DeviceId);
         Assert.False(string.IsNullOrEmpty(result.ActivationKey));
+        using var scope = _factory.Services.CreateScope();
+        var stored = await scope.ServiceProvider.GetRequiredService<AppDbContext>().LockDevices.FindAsync(result.DeviceId);
+        Assert.NotNull(stored);
+        Assert.StartsWith("sha256:", stored.ActivationKey);
+        Assert.DoesNotContain(result.ActivationKey, stored.ActivationKey);
+        Assert.Null(stored.SesameApiKey);
     }
 
     [Fact]

@@ -28,6 +28,7 @@ public static class PasskeyExtensions
         });
 
         services.AddScoped<PasskeyService>();
+        services.AddSingleton<PasskeyChallengeStore>();
 
         return services;
     }

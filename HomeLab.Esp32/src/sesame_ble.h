@@ -1,193 +1,126 @@
 #pragma once
 
 #include <Arduino.h>
-#include <libsesame3bt/Sesame.h>
-#include <libsesame3bt/SesameClient.h>
-#include <libsesame3bt/SesameScanner.h>
+#include <NimBLEDevice.h>
+#include <Sesame.h>
+#include <SesameClient.h>
+#include <string_view>
 
 /**
- * SESAME スマートロック BLE制御
- * libsesame3bt を使用してSESAMEデバイスに直接BLE接続し施錠/解錠を行う
- *
- * 対応デバイス:
- * - SESAME 3 / 4 / 5 / 5 PRO
- * - SESAME bot / bot 2
- * - SESAME 3 bike (Cycle)
+ * SESAMEスマートロックのBLE制御。
+ * libsesame3bt 0.33以降の非同期APIに合わせ、状態とバッテリーは
+ * status callbackから更新する。
  */
 class SesameBle {
 public:
-    /**
-     * 初期化
-     * @param deviceAddress SESAMEのBLE MACアドレス (例: "xx:xx:xx:xx:xx:xx")
-     * @param secretKey SESAMEのシークレットキー (API有効化キーから取得)
-     * @param model SESAMEモデル種別
-     */
     void begin(const String& deviceAddress, const String& secretKey,
-               libsesame3bt::Sesame::model_t model = libsesame3bt::Sesame::model_t::sesame_5) {
+               libsesame3bt::Sesame::model_t model = libsesame3bt::Sesame::model_t::sesame_5,
+               uint8_t addressType = BLE_ADDR_RANDOM) {
         _secretKey = secretKey;
         _model = model;
+        _address = NimBLEAddress(deviceAddress.c_str(), addressType);
 
-        // BLEアドレス設定
-        _address = BLEAddress(deviceAddress.c_str(), BLE_ADDR_RANDOM);
+        _initialized = _client.begin(_address, _model);
+        if (!_initialized) {
+            Serial.printf("[SESAME] Failed to initialize %s\n", deviceAddress.c_str());
+            return;
+        }
+
+        if (!_client.set_keys("", _secretKey.c_str())) {
+            _initialized = false;
+            Serial.println("[SESAME] Invalid secret key");
+            return;
+        }
+        _client.set_connect_timeout(5000);
+        _client.set_status_callback([](libsesame3bt::SesameClient&, libsesame3bt::SesameClient::Status status) {
+            _isLocked = status.in_lock();
+            _hasStatus = status.in_lock() != status.in_unlock() && !status.is_critical() && !status.is_clutch_failed();
+            ++_statusRevision;
+            _batteryLevel = constrain(static_cast<int>(status.battery_pct()), 0, 100);
+        });
+
         Serial.printf("[SESAME] Initialized for %s (model=%d)\n",
                       deviceAddress.c_str(), static_cast<int>(model));
     }
 
-    /**
-     * SESAMEにBLE接続
-     */
     bool connect() {
-        if (_connected) {
-            Serial.println("[SESAME] Already connected");
+        if (!_initialized) return false;
+        if (_client.is_session_active()) {
+            _connected = true;
             return true;
         }
 
         Serial.println("[SESAME] Connecting...");
-
-        _client.begin(_address, _model);
-        _client.set_keys("", _secretKey.c_str());
-
-        if (!_client.connect()) {
+        _hasStatus = false;
+        if (!_client.connect(0)) {
+            _connected = false;
             Serial.println("[SESAME] Connection failed");
             return false;
         }
 
-        // 接続完了待ち (ステータス受信で判定)
-        unsigned long start = millis();
-        while (!_client.isReady() && millis() - start < 10000) {
-            _client.loop();
-            delay(50);
+        _connected = _client.is_session_active();
+        if (_connected) {
+            _client.request_status();
+            Serial.println("[SESAME] Connected");
         }
-
-        if (!_client.isReady()) {
-            Serial.println("[SESAME] Connection timeout");
-            disconnect();
-            return false;
-        }
-
-        _connected = true;
-
-        // 現在のロック状態を取得
-        auto status = _client.getStatus();
-        if (status.has_value()) {
-            _isLocked = (status.value() == libsesame3bt::Sesame::status_t::locked);
-            Serial.printf("[SESAME] Connected! Status: %s\n",
-                          _isLocked ? "LOCKED" : "UNLOCKED");
-        }
-
-        return true;
+        return _connected;
     }
 
-    /**
-     * 解錠
-     * @param tag 操作履歴に記録されるタグ (ユーザー名等)
-     */
+    bool ensureConnected() {
+        if (_connected && _client.is_session_active()) return true;
+        _connected = false;
+
+        _hasStatus = false;
+        if (_hasAttempted && millis() - _lastConnectAttempt < RECONNECT_INTERVAL_MS) return false;
+        _hasAttempted = true;
+        _lastConnectAttempt = millis();
+        return connect();
+    }
+
     bool unlock(const char* tag = "HomeLock") {
-        if (!_connected) {
-            Serial.println("[SESAME] Not connected");
-            return false;
-        }
-
-        Serial.printf("[SESAME] Unlocking... (tag: %s)\n", tag);
-        bool result = _client.unlock(tag);
-        if (result) {
-            _isLocked = false;
-            Serial.println("[SESAME] Unlock successful");
-        } else {
-            Serial.println("[SESAME] Unlock failed");
-        }
-        return result;
+        return ensureConnected() && _client.unlock(std::string_view(tag));
     }
 
-    /**
-     * 施錠
-     * @param tag 操作履歴に記録されるタグ
-     */
     bool lock(const char* tag = "HomeLock") {
-        if (!_connected) {
-            Serial.println("[SESAME] Not connected");
-            return false;
-        }
-
-        Serial.printf("[SESAME] Locking... (tag: %s)\n", tag);
-        bool result = _client.lock(tag);
-        if (result) {
-            _isLocked = true;
-            Serial.println("[SESAME] Lock successful");
-        } else {
-            Serial.println("[SESAME] Lock failed");
-        }
-        return result;
+        return ensureConnected() && _client.lock(std::string_view(tag));
     }
 
-    /**
-     * トグル (施錠↔解錠)
-     */
     bool toggle(const char* tag = "HomeLock") {
-        return _isLocked ? unlock(tag) : lock(tag);
+        return _hasStatus && (_isLocked ? unlock(tag) : lock(tag));
     }
 
-    /**
-     * 接続切断
-     */
     void disconnect() {
-        if (_connected) {
-            _client.disconnect();
-            _connected = false;
-            Serial.println("[SESAME] Disconnected");
-        }
+        if (_initialized) _client.disconnect();
+        _connected = false;
+        _hasStatus = false;
     }
 
-    /**
-     * ループ処理 (メインループで呼び出し)
-     * BLEイベント処理を行う
-     */
-    void loop() {
-        if (_connected) {
-            _client.loop();
-        }
-    }
+    // libsesame3btはBLEイベントをNimBLEが処理するため、互換用に空実装を残す。
+    void loop() {}
 
-    /**
-     * 接続状態取得
-     */
-    bool isConnected() const { return _connected; }
-
-    /**
-     * ロック状態取得
-     */
+    bool isConnected() const { return _connected && _client.is_session_active(); }
+    bool isInitialized() const { return _initialized; }
     bool isLocked() const { return _isLocked; }
+    bool hasStatus() const { return isConnected() && _hasStatus; }
+    uint32_t statusRevision() const { return _statusRevision; }
+    int getBatteryLevel() const { return _batteryLevel; }
 
-    /**
-     * バッテリーレベル取得 (%)
-     */
-    int getBatteryLevel() const {
-        if (!_connected) return -1;
-        auto batt = _client.getBatteryVoltage();
-        if (batt.has_value()) {
-            // CR2032電圧 3.0V=100%, 2.0V=0% の簡易換算
-            int pct = static_cast<int>((batt.value() - 2.0f) / 1.0f * 100.0f);
-            return constrain(pct, 0, 100);
-        }
-        return -1;
-    }
-
-    /**
-     * ステータス更新 (接続中に状態変化があった場合)
-     */
     void updateStatus() {
-        if (!_connected) return;
-        auto status = _client.getStatus();
-        if (status.has_value()) {
-            _isLocked = (status.value() == libsesame3bt::Sesame::status_t::locked);
-        }
+        if (isConnected()) _client.request_status();
     }
 
 private:
     libsesame3bt::SesameClient _client;
-    BLEAddress _address{""};
+    NimBLEAddress _address;
     String _secretKey;
     libsesame3bt::Sesame::model_t _model = libsesame3bt::Sesame::model_t::sesame_5;
+    bool _initialized = false;
     bool _connected = false;
-    bool _isLocked = true;
+    inline static volatile bool _isLocked = true;
+    inline static volatile bool _hasStatus = false;
+    inline static volatile uint32_t _statusRevision = 0;
+    inline static volatile int _batteryLevel = -1;
+    unsigned long _lastConnectAttempt = 0;
+    bool _hasAttempted = false;
+    static constexpr uint32_t RECONNECT_INTERVAL_MS = 30000;
 };

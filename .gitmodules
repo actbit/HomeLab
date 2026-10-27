@@ -1,0 +1,3 @@
+[submodule "external/SvelteSharp"]
+	path = external/SvelteSharp
+	url = https://github.com/actbit/sveltesharp.git

@@ -8,9 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\HomeLab.ServiceDefaults\HomeLab.ServiceDefaults.csproj" />
-    <ProjectReference Include="..\HomeLab.Client\HomeLab.Client.csproj" />
     <ProjectReference Include="..\..\HomeLab.Shared\HomeLab.Shared.csproj" />
-    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.8" />
   </ItemGroup>
 
   <ItemGroup>
@@ -19,6 +17,7 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.8" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.2" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.8" />
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.8" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.8" />
     <PackageReference Include="Finbuckle.MultiTenant" Version="10.1.0" />
@@ -31,5 +30,17 @@
     <PackageReference Include="Otp.NET" Version="1.4.1" />
     <PackageReference Include="QRCoder" Version="1.8.0" />
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\external\SvelteSharp\SvelteSharp.Core\SvelteSharp.Core.csproj" />
+    <ProjectReference Include="..\..\external\SvelteSharp\SvelteSharp.Jint\SvelteSharp.Jint.csproj" />
+    <ProjectReference Include="..\..\external\SvelteSharp\SvelteSharp.Build\SvelteSharp.Build.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <SvelteSharpBuildTaskAssembly>$(MSBuildThisFileDirectory)..\..\external\SvelteSharp\SvelteSharp.Build\bin\$(Configuration)\net10.0\SvelteSharp.Build.dll</SvelteSharpBuildTaskAssembly>
+  </PropertyGroup>
+
+  <Import Project="..\..\external\SvelteSharp\SvelteSharp.Build\buildTransitive\SvelteSharp.Build.targets" />
 
 </Project>

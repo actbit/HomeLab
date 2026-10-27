@@ -15,8 +15,8 @@ const CHARACTERISTICS = {
     SESAME_UUID:       "0000fe45-8e22-4541-9d4c-21edae82e5a1",  // Write
     SESAME_API_KEY:    "0000fe46-8e22-4541-9d4c-21edae82e5a1",  // Write
     ACTIVATION_KEY:    "0000fe47-8e22-4541-9d4c-21edae82e5a1",  // Write
-    MQTT_BROKER_URL:   "0000fe48-8e22-4541-9d4c-21edae82e5a1",  // Write
-    STATUS:            "0000fe49-8e22-4541-9d4c-21edae82e5a1",  // Notify
+    SERVER_URL:        "0000fe48-8e22-4541-9d4c-21edae82e5a1",  // Write
+    STATUS:            "0000fe4a-8e22-4541-9d4c-21edae82e5a1",  // Notify
 };
 
 let connectedDevice = null;
@@ -122,19 +122,24 @@ window.bleProvisioning = {
     },
 
     /**
-     * MQTTブローカーURLをESP32に書き込み
+     * WebSocketサーバーURLをESP32に書き込み
      */
-    async writeMqttBrokerUrl(url) {
+    async writeServerUrl(url) {
         try {
             const service = await getService();
-            const urlChar = await service.getCharacteristic(CHARACTERISTICS.MQTT_BROKER_URL);
+            const urlChar = await service.getCharacteristic(CHARACTERISTICS.SERVER_URL);
             await urlChar.writeValue(new TextEncoder().encode(url));
 
             return { success: true };
         } catch (error) {
-            console.error("MQTT URL write failed:", error);
+            console.error("Server URL write failed:", error);
             return { success: false, error: error.message };
         }
+    },
+
+    // 旧UIや既存ブックマークからの呼び出し用。
+    async writeMqttBrokerUrl(url) {
+        return await this.writeServerUrl(url);
     },
 
     /**
@@ -187,8 +192,4 @@ function handleStatusNotification(event) {
     const value = new TextDecoder().decode(event.target.value);
     console.log("ESP32 Status:", value);
 
-    // Blazorに通知 (DotNet.invokeMethod で)
-    if (window.DotNet) {
-        DotNet.invokeMethodAsync("HomeLab.Client", "OnBleStatusReceived", value);
-    }
 }

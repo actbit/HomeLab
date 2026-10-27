@@ -18,17 +18,9 @@ public static class DeviceWebSocketMiddleware
                 return;
             }
 
-            var deviceId = context.Request.Query["deviceId"].ToString();
-            var activationKey = context.Request.Query["activationKey"].ToString();
-
-            if (string.IsNullOrEmpty(deviceId) || string.IsNullOrEmpty(activationKey))
-            {
-                context.Response.StatusCode = 400;
-                return;
-            }
-
+            // 最初の認証メッセージを待つ（deviceIdとactivationKeyはメッセージ内で送信）
             using var ws = await context.WebSockets.AcceptWebSocketAsync();
-            await connectionService.HandleConnectionAsync(ws, deviceId, activationKey);
+            await connectionService.HandleConnectionAsync(ws, context.RequestAborted);
         });
 
         return app;

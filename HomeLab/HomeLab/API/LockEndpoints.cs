@@ -52,13 +52,7 @@ public static class LockEndpoints
             var requestId = Guid.NewGuid().ToString("N")[..16];
             var action = request.Action.ToString().ToLowerInvariant();
 
-            var sent = await connectionService.SendCommandAsync(device.Id, action, requestId);
-            if (!sent)
-            {
-                return Results.BadRequest(new { error = "Device not connected" });
-            }
-
-            // 操作ログ記録
+            // デバイスからの応答が送信直後に届いても記録を更新できるよう先に保存する。
             var log = new LockLog
             {
                 Id = Guid.NewGuid(),
@@ -67,11 +61,20 @@ public static class LockEndpoints
                 TriggeredBy = "User",
                 UserId = userId,
                 RequestId = requestId,
+                ErrorMessage = DeviceConnectionService.PendingCommand,
                 Timestamp = DateTimeOffset.UtcNow,
             };
 
             dbContext.LockLogs.Add(log);
             await dbContext.SaveChangesAsync();
+
+            var sent = await connectionService.SendCommandAsync(device.Id, action, requestId);
+            if (!sent)
+            {
+                log.ErrorMessage = "Device not connected";
+                await dbContext.SaveChangesAsync();
+                return Results.BadRequest(new { error = "Device not connected" });
+            }
 
             return Results.Ok(new LockActionResponse(true, requestId, null));
         });
@@ -80,6 +83,7 @@ public static class LockEndpoints
         group.MapGet("/{id:guid}/status", async (
             Guid id,
             AppDbContext dbContext,
+            DeviceConnectionService connections,
             HttpContext httpContext) =>
         {
             var userId = httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -100,7 +104,7 @@ public static class LockEndpoints
             {
                 device.Id,
                 device.Status,
-                device.IsLocked,
+                IsLocked = connections.GetKnownLockState(device.Id),
                 device.BatteryLevel,
                 device.WifiRssi,
                 device.LastSeenAt,

@@ -9,7 +9,7 @@ ASP.NET Core 10 サーバーに WebSocket・SignalR を内蔵し、外部 MQTT �
 ```
 ┌──────────────┐  ┌─────────────────┐  ┌─────────────────┐
 │  Web Client  │  │  Native Client  │  │     ESP32       │
-│ (Blazor WASM)│  │  (Avalonia 12)  │  │  (PlatformIO)   │
+│ (SvelteSharp)│  │  (Avalonia 12)  │  │  (PlatformIO)   │
 │  + Web BLE   │  │ Android/Windows │  │  BLE → SESAME   │
 └──────┬───────┘  └───────┬─────────┘  └────────┬────────┘
        │                  │                      │
@@ -19,11 +19,11 @@ ASP.NET Core 10 サーバーに WebSocket・SignalR を内蔵し、外部 MQTT �
                 ▼                                │
      ┌──────────────────────────┐                │
      │   ASP.NET Core 10 API   │◄───────────────┘
-     │  + Blazor Server UI      │
+     │  + SvelteSharp UI        │
      │  + WebSocket (内蔵)       │    ← 外部Broker不要
      │  + SignalR (Push通知)     │
      │  + Finbuckle MultiTenant │
-     │  + FIDO2 Passkey Auth    │
+│  + FIDO2 Passkey管理     │
      └──────────┬───────────────┘
                 │
      ┌──────────┴──────────┐
@@ -50,7 +50,7 @@ ASP.NET Core 10 サーバーに WebSocket・SignalR を内蔵し、外部 MQTT �
 
 | 機能 | 詳細 |
 |------|------|
-| **認証** | JWT + Cookie / Passkey (FIDO2) / TOTP (Google Authenticator) |
+| **認証** | JWT + Cookie / パスキー (FIDO2) / TOTP とリカバリーコード |
 | **デバイス管理** | CRUD、ステータス監視、バッテリー/WiFi強度表示 |
 | **ロック制御** | 施錠/解錠/トグル、操作ログ記録 |
 | **リアルタイム通信** | WebSocket (ESP32↔サーバー) / SignalR (サーバー↔ブラウザ) |
@@ -104,8 +104,7 @@ HomeLab/
 │   │   ├── Services/
 │   │   │   └── DeviceConnectionService.cs #     WebSocket 接続管理
 │   │   ├── Tenancy/                       #   Finbuckle マルチテナンシー
-│   │   └── Components/                    #   Blazor UI
-│   ├── HomeLab.Client/                    # Blazor WASM クライアント
+│   │   └── Views/                         #   SvelteSharp (Svelte 5) UI
 │   └── HomeLab.Tests/
 │       └── HomeLab.Server.Tests/          # 統合テスト (xUnit)
 ├── HomeLab.NativeClient/
@@ -131,13 +130,14 @@ HomeLab/
 | 技術 | バージョン | 用途 |
 |------|-----------|------|
 | .NET | 10 | ランタイム |
-| ASP.NET Core | 10 | Web API / Blazor |
+| ASP.NET Core | 10 | Web API / SvelteSharp Hybrid UI |
 | Entity Framework Core | 10 | ORM |
 | Finbuckle.MultiTenant | 10.1 | マルチテナンシー |
 | Fido2 | 4.0 | WebAuthn / Passkey |
 | Otp.NET | 1.4 | TOTP 認証 |
 | QRCoder | 1.8 | QR コード生成 |
 | SignalR | - | リアルタイム Push 通知 |
+| SvelteSharp | git submodule | Svelte 5 のSSR + hydrate UI |
 | PostgreSQL / SQLite | - | データベース |
 
 ### ESP32
@@ -169,7 +169,7 @@ HomeLab/
 ### 1. サーバー起動
 
 ```bash
-cd HomeLab/HomeLab/HomeLab
+cd HomeLab/HomeLab
 
 # 開発環境 (SQLite)
 dotnet run
@@ -178,6 +178,27 @@ dotnet run
 # appsettings.json で Database:Provider = "PostgreSQL" に設定
 dotnet run --environment Production
 ```
+
+SvelteSharp は `external/SvelteSharp` の git submodule として組み込んでいます。
+初回取得時は次のように submodule も取得してください。
+
+```bash
+git clone --recurse-submodules <repository-url>
+# 既存チェックアウトの場合
+git submodule update --init --recursive
+```
+
+主要画面 (`/`, `/login`, `/register`, `/devices`) は SvelteSharp で描画します。
+ESP32 とサーバー間は WebSocket、サーバーからブラウザへの状態通知は SignalR (`/hubs/lock`) です。
+プロビジョニング、認証器設定、パスキー一覧・削除もSvelteSharpで提供します。
+パスキーの利用にはアクセス元のURLと一致する `Passkey:Origin`、ドメインと一致する `Passkey:RelyingPartyId`、HTTPSが必要です（開発用localhostを除く）。
+パスキーのチャレンジはサーバーのメモリ内に短時間だけ保存され、1回使用すると消えます。複数台構成では共有ストアが必要です。
+
+#### パスワード再設定メール
+
+`PublicBaseUrl` に外部からアクセスするHTTPSのベースURL、`Email:SmtpHost`、`Email:SmtpPort`、`Email:From`、必要に応じて `Email:Username` と `Email:Password` を設定してください。環境変数なら `PublicBaseUrl`、`Email__SmtpHost`、`Email__SmtpPort`、`Email__From`、`Email__Username`、`Email__Password` です。SMTPはSTARTTLSを使います。未設定では再設定メールを送れません。秘密情報は設定ファイルにコミットせず、環境変数またはシークレットストアで渡してください。
+
+TOTPの設定時に表示されるリカバリーコードは一度しか表示されません。安全な場所に保管してください。サーバーのData Protection鍵は永続化・バックアップし、再起動やサーバー移行後も使えるようにしてください。鍵を失うと暗号化されたTOTP秘密鍵を復号できません。
 
 #### 設定 (`appsettings.json`)
 
@@ -216,6 +237,20 @@ pio run
 pio run --target upload && pio device monitor
 ```
 
+初期設定時はシリアルモニターに表示される6桁のBLEペアリングコードを、OSのペアリング画面で入力します。Wi-Fiパスワードや鍵はログに出力しません。
+
+`wss://` 接続時は証明書とホスト名を検証します。デプロイ先の信頼するCA証明書をPEM形式で `HomeLab.Esp32/src/tls_ca.h` に用意してからビルドしてください（同ファイルはGit管理対象外です）。CAがない場合やNTP時刻を取得できない場合、WSS接続は開始しません。
+
+```cpp
+#pragma once
+#define HOMELAB_TLS_CA_CERT R"PEM(-----BEGIN CERTIFICATE-----
+CA証明書の内容
+-----END CERTIFICATE-----
+)PEM"
+```
+
+自己署名証明書の場合は、その証明書を署名したCAを指定し、URLのホスト名が証明書と一致するようにしてください。`ws://` は暗号化されない開発用接続です。ESP32内の設定はNVSに保存されるため、物理的な読み取り対策にはデバイスごとのフラッシュ暗号化・NVS暗号化を別途構成してください。
+
 #### 初回プロビジョニングフロー
 
 ```
@@ -248,13 +283,15 @@ dotnet build HomeLab.NativeClient.Android/HomeLab.NativeClient.Android.csproj
 |---------|------|------|------|
 | POST | `/login` | - | メール/パスワード ログイン |
 | POST | `/register` | - | アカウント登録 |
-| POST | `/passkey/register-options` | - | Passkey 登録オプション |
+| POST | `/passkey/register-options` | ✅ | Passkey 登録オプション |
 | POST | `/passkey/register` | ✅ | Passkey 登録完了 |
 | POST | `/passkey/login-options` | - | Passkey ログインオプション |
 | POST | `/passkey/login` | - | Passkey ログイン |
 | POST | `/totp/setup` | ✅ | TOTP QR コード生成 |
 | POST | `/totp/enable` | ✅ | TOTP 有効化 |
 | POST | `/totp/disable` | ✅ | TOTP 無効化 |
+| POST | `/forgot-password` | - | パスワード再設定メール送信 |
+| POST | `/reset-password` | - | 再設定トークンを使ったパスワード変更 |
 | GET | `/passkeys` | ✅ | 登録済みパスキー一覧 |
 | DELETE | `/passkeys/{id}` | ✅ | パスキー削除 |
 
@@ -279,7 +316,9 @@ dotnet build HomeLab.NativeClient.Android/HomeLab.NativeClient.Android.csproj
 
 | パス | 説明 |
 |------|------|
-| `/ws/device?deviceId=xxx&activationKey=yyy` | ESP32 デバイス接続 |
+| `/ws/device` | ESP32 デバイス接続。接続後の最初のJSONメッセージで `deviceId` と `activationKey` を送信 |
+
+施錠状態と操作成功の表示には、対応するESP32ファームウェアからの `stateConfirmed: true` が必要です。更新前や接続断の状態は「不明」と表示されます。
 
 ### SignalR Hub
 
@@ -290,7 +329,7 @@ dotnet build HomeLab.NativeClient.Android/HomeLab.NativeClient.Android.csproj
 ## 🧪 テスト
 
 ```bash
-cd HomeLab/HomeLab/HomeLab.Tests/HomeLab.Server.Tests
+cd HomeLab/HomeLab.Tests/HomeLab.Server.Tests
 
 # 全テスト実行
 dotnet test

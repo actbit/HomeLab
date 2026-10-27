@@ -365,6 +365,10 @@ FodyWeavers.xsd
 # PlatformIO
 HomeLab.Esp32/.pio/
 HomeLab.Esp32/.vscode/
+HomeLab.Esp32/src/tls_ca.h
+
+# SvelteSharp restores its external Node toolchain during build.
+HomeLab/HomeLab/tools/svelte/
 
 # SQLite databases
 *.db

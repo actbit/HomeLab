@@ -59,6 +59,13 @@ public class EspDeviceAuthHandler : AuthenticationHandler<EspDeviceAuthOptions>
         var path = Request.Path;
         var timestamp = Request.Headers["X-Timestamp"].ToString();
 
+        // timestamp検証（リプレイ攻撃対策）
+        if (!long.TryParse(timestamp, out var ts) ||
+            Math.Abs(DateTimeOffset.UtcNow.ToUnixTimeSeconds() - ts) > 300)
+        {
+            return AuthenticateResult.Fail("Timestamp expired or invalid");
+        }
+
         // ボディを読み取り (必要に応じて)
         Request.EnableBuffering();
         Request.Body.Position = 0;
@@ -66,7 +73,10 @@ public class EspDeviceAuthHandler : AuthenticationHandler<EspDeviceAuthOptions>
         var body = await reader.ReadToEndAsync();
         Request.Body.Position = 0;
 
-        var payload = $"{method}\n{path}\n{timestamp}\n{body}";
+        // ボディのSHA-256ハッシュを使用（署名ペイロードサイズ削減）
+        using var sha = SHA256.Create();
+        var bodyHash = sha.ComputeHash(Encoding.UTF8.GetBytes(body));
+        var payload = $"{method}\n{path}\n{timestamp}\n{Convert.ToHexString(bodyHash)}";
         var payloadBytes = Encoding.UTF8.GetBytes(payload);
         var signatureBytes = Convert.FromBase64String(signatureBase64);
 

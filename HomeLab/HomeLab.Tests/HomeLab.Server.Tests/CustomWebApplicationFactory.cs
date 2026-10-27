@@ -116,6 +116,12 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
         builder.ConfigureServices(services =>
         {
+            var svelteOptions = (SvelteSharp.AspNetCore.SvelteSharpOptions)services
+                .Single(descriptor => descriptor.ServiceType == typeof(SvelteSharp.AspNetCore.SvelteSharpOptions))
+                .ImplementationInstance!;
+            svelteOptions.SvelteToolchainPath = Path.GetFullPath(Path.Combine(
+                AppContext.BaseDirectory, "..", "..", "..", "..", "..", "HomeLab", "tools", "svelte"));
+
             var internalSp = new ServiceCollection()
                 .AddEntityFrameworkInMemoryDatabase().BuildServiceProvider();
 

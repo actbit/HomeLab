@@ -43,9 +43,8 @@ public class PasskeyService
                 .Select(id => new PublicKeyCredentialDescriptor(id)).ToList(),
             AuthenticatorSelection = new AuthenticatorSelection
             {
-                AuthenticatorAttachment = AuthenticatorAttachment.CrossPlatform,
                 ResidentKey = ResidentKeyRequirement.Required,
-                UserVerification = UserVerificationRequirement.Preferred,
+                UserVerification = UserVerificationRequirement.Required,
             },
             AttestationPreference = AttestationConveyancePreference.None,
         });
@@ -63,8 +62,8 @@ public class PasskeyService
             OriginalOptions = options,
             IsCredentialIdUniqueToUserCallback = async (args, ct) =>
             {
-                return !await _dbContext.PasskeyCredentials
-                    .AnyAsync(c => c.CredentialId.SequenceEqual(args.CredentialId), ct);
+                var ids = await _dbContext.PasskeyCredentials.Select(c => c.CredentialId).ToListAsync(ct);
+                return !ids.Any(id => id.SequenceEqual(args.CredentialId));
             }
         });
 
@@ -74,10 +73,10 @@ public class PasskeyService
             CredentialId = result.Id,
             PublicKey = result.PublicKey,
             UserHandle = result.User.Id,
-            SignatureCounter = 0,
+            SignatureCounter = result.SignCount,
             AuthenticatorType = result.Type.ToString(),
             Name = deviceName,
-            Aaguid = [],
+            Aaguid = result.AaGuid.ToByteArray(),
             CreatedAt = DateTimeOffset.UtcNow,
         };
 
@@ -102,19 +101,28 @@ public class PasskeyService
         return _fido2.GetAssertionOptions(new GetAssertionOptionsParams
         {
             AllowedCredentials = existingCredentials,
-            UserVerification = UserVerificationRequirement.Preferred,
+            UserVerification = UserVerificationRequirement.Required,
         });
     }
 
-    public async Task<AppUser?> CompleteLoginAsync(AuthenticatorAssertionRawResponse assertionResponse)
+    public async Task<AppUser?> CompleteLoginAsync(AuthenticatorAssertionRawResponse assertionResponse, AssertionOptions options)
     {
-        var credential = await _dbContext.PasskeyCredentials
-            .Include(c => c.User)
-            .FirstOrDefaultAsync(c => c.CredentialId.SequenceEqual(
-                Convert.FromBase64String(assertionResponse.Id)));
+        var credentials = await _dbContext.PasskeyCredentials.Include(c => c.User).ToListAsync();
+        var credential = credentials.FirstOrDefault(c => c.CredentialId.SequenceEqual(assertionResponse.RawId));
 
         if (credential is null) return null;
 
+        var result = await _fido2.MakeAssertionAsync(new MakeAssertionParams
+        {
+            AssertionResponse = assertionResponse,
+            OriginalOptions = options,
+            StoredPublicKey = credential.PublicKey,
+            StoredSignatureCounter = credential.SignatureCounter,
+            IsUserHandleOwnerOfCredentialIdCallback = (args, _) => Task.FromResult(
+                credential.UserHandle.SequenceEqual(args.UserHandle) && credential.CredentialId.SequenceEqual(args.CredentialId))
+        });
+
+        credential.SignatureCounter = result.SignCount;
         credential.LastUsedAt = DateTimeOffset.UtcNow;
         await _dbContext.SaveChangesAsync();
         return credential.User;
@@ -122,10 +130,10 @@ public class PasskeyService
 
     public async Task<List<PasskeyCredential>> GetUserPasskeysAsync(string userId)
     {
-        return await _dbContext.PasskeyCredentials
+        var credentials = await _dbContext.PasskeyCredentials
             .Where(c => c.UserId == userId)
-            .OrderByDescending(c => c.LastUsedAt ?? c.CreatedAt)
             .ToListAsync();
+        return credentials.OrderByDescending(c => c.LastUsedAt ?? c.CreatedAt).ToList();
     }
 
     public async Task DeletePasskeyAsync(Guid credentialId, string userId)

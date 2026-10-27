@@ -23,7 +23,14 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\HomeLab\HomeLab.csproj" />
-    <ProjectReference Include="..\..\..\..\HomeLab.Shared\HomeLab.Shared.csproj" />
+    <ProjectReference Include="..\..\..\HomeLab.Shared\HomeLab.Shared.csproj" />
   </ItemGroup>
+
+  <Target Name="CopySvelteArtifactsForTests" AfterTargets="Build">
+    <ItemGroup>
+      <SvelteTestArtifact Include="$(MSBuildProjectDirectory)\..\..\HomeLab\bin\$(Configuration)\$(TargetFramework)\SvelteSharp\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(SvelteTestArtifact)" DestinationFiles="@(SvelteTestArtifact->'$(OutDir)SvelteSharp\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>
